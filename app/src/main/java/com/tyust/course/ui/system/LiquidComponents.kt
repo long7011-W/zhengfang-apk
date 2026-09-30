@@ -180,13 +180,13 @@ fun LiquidButton(
             else if (activeTint == MaterialTheme.colorScheme.error) MaterialTheme.colorScheme.onError
             else if (activeTint.luminance() > 0.4f) Color(0xFF171B22) else Color.White
         }
-        style == LiquidButtonStyle.SolidSurface -> wallpaperColors.onSurface
-        else -> LocalContentColor.current
+        style == LiquidButtonStyle.SolidSurface -> MaterialTheme.colorScheme.onSurface
+        else -> wallpaperColors.onSurface
     }
     val resolvedContentColor = if (enabled) {
         activeContentColor
     } else {
-        wallpaperColors.onSurfaceVariant.copy(alpha = 0.62f)
+        (if (isSolid) MaterialTheme.colorScheme.onSurfaceVariant else wallpaperColors.onSurfaceVariant).copy(alpha = 0.62f)
     }
     val disabledSurfaceColor = wallpaperColors.surface.copy(
         alpha = GlassRecipe.ActionDisabledSurfaceAlpha
@@ -345,7 +345,7 @@ fun LiquidButton(
         val fallbackColor = when {
             !enabled -> if (isLightTheme) IOSDisabledFillLight else IOSDisabledFillDark
             style == LiquidButtonStyle.SolidTinted -> activeTint
-            style == LiquidButtonStyle.SolidSurface -> wallpaperColors.solidSurface
+            style == LiquidButtonStyle.SolidSurface -> MaterialTheme.colorScheme.surfaceContainerHigh
             style == LiquidButtonStyle.Tinted -> activeTint.copy(alpha = GlassRecipe.ActionTintAlpha)
             style == LiquidButtonStyle.Surface -> wallpaperColors.solidSurface.copy(alpha = 0.94f)
             else -> Color.Transparent
@@ -791,7 +791,8 @@ fun AnimatedIconButton(
             shape = CircleShape,
             optics = optics,
             enabled = enabled,
-            interactive = enabled
+            interactive = enabled,
+            glyphColor = tint
         )
     } else {
         // 裸图标没有容器可折射，按压只能靠图标本身缩放。

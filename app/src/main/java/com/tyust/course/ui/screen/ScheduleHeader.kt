@@ -38,6 +38,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.PlatformTextStyle
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -108,6 +109,8 @@ fun WeekHeaderCompact(
     val date = requireNotNull(ScheduleDates.date(anchor, currentWeek, selectedDay ?: 1))
     val weekday = ScheduleDates.dayAt(now)
     val colors = MaterialTheme.colorScheme
+    val region = rememberWallpaperRegionState()
+    val appearance = rememberWallpaperRegionAppearance(region)
     val statusHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val height = scheduleHeaderHeight()
     val actionHeight = height / 2
@@ -122,7 +125,8 @@ fun WeekHeaderCompact(
         "schedule-header", currentWeek, selectedDay, lift >= 0.99f,
         freshness = LocalPageGlassFreshness.current
     ) { coordinates -> drawBackdropSource(controlBackdrop, density, coordinates) } else null
-    Box(Modifier.fillMaxWidth().height(statusHeight + height).testTag("schedule-header")
+    ProvideWallpaperAppearance(appearance) {
+    Box(Modifier.fillMaxWidth().height(statusHeight + height).testTag("schedule-header").wallpaperRegion(region)
         .then(wallpaperHeaderScrim()).glassLensAnchor(headerLens)) {
         // The sampled surface is a sibling of the controls, never their parent.
         Box(Modifier.matchParentSize().then(if (headerBackdrop != null) Modifier.layerBackdrop(headerBackdrop) else Modifier)) {
@@ -148,19 +152,23 @@ fun WeekHeaderCompact(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                         ScheduleDateText("${date.get(Calendar.MONTH) + 1}月${date.get(Calendar.DAY_OF_MONTH)}日",
                             timestamp = date.timeInMillis, tag = "schedule-date-title",
-                            modifier = Modifier.weight(1f, fill = false), color = colors.onSurface,
+                            modifier = Modifier.weight(1f, fill = false), color = appearance.onSurface,
                             style = ScheduleDateTypography.copy(
                                 fontSize = when { fontScale > 1.3f -> 15.sp; fontScale > 1.1f -> 20.sp; else -> 22.sp },
                                 lineHeight = if (fontScale > 1.3f) 18.sp else 24.sp, fontWeight = FontWeight.Bold))
-                        AnimatedLineIcon(AnimatedIconSpec.Chevron, Modifier.size(14.dp), tint = colors.onSurfaceVariant)
+                        AnimatedLineIcon(AnimatedIconSpec.Chevron, Modifier.size(14.dp), tint = appearance.onSurfaceVariant)
                     }
-                    AnimatedNumberText(when {
+                    val weekStatus = when {
                         ScheduleDates.firstMonday(firstWeekDate) == null -> "开学日期待设置"
                         currentWeek < 1 -> "尚未开学"
                         currentWeek > ScheduleMaxWeeks -> "本学期已结束"
-                        else -> (if (isNextSemester) "下学期 · " else "") + "第 $currentWeek 周"
-                    }, modifier = Modifier.testTag("schedule-header-week"),
-                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 11.sp, lineHeight = 14.sp), color = colors.onSurfaceVariant)
+                        else -> null
+                    }
+                    val weekStyle = MaterialTheme.typography.labelSmall.merge(ScheduleDateTypography)
+                        .copy(fontSize = 11.sp, lineHeight = 14.sp)
+                    if (weekStatus != null) Text(weekStatus, Modifier.testTag("schedule-header-week"),
+                        style = weekStyle, color = appearance.onSurfaceVariant)
+                    else ScheduleWeekLabel(currentWeek, isNextSemester, weekStyle, appearance.onSurfaceVariant)
                 }
                 Row(Modifier.testTag("schedule-header-actions"), horizontalArrangement = Arrangement.spacedBy(6.dp),
                     verticalAlignment = Alignment.CenterVertically) {
@@ -176,7 +184,7 @@ fun WeekHeaderCompact(
                             LiquidButton(toggle, backdrop = controlBackdrop, modifier = Modifier.size(40.dp),
                                 minHeight = 40.dp, horizontalPadding = 0.dp) {
                                 AnimatedLineIcon(AnimatedIconSpec.More, Modifier.size(21.dp), description = "更多课表操作",
-                                    tint = colors.onSurface)
+                                    tint = appearance.onSurface)
                             }
                         }
                     })
@@ -200,8 +208,25 @@ fun WeekHeaderCompact(
         }
         }
     }
+    }
     if (calendarOpen) ScheduleCalendarPanel(currentWeek, isNextSemester, onToggleSemester,
         onPrevClick, onNextClick, { onWeekSelect(it); calendarOpen = false }, { calendarOpen = false })
+}
+
+/** Reserve two digits as a centered number, rather than padding a single digit on its left. */
+@Composable
+internal fun ScheduleWeekLabel(week: Int, next: Boolean, style: TextStyle, color: Color) {
+    val measurer = rememberTextMeasurer()
+    val density = LocalDensity.current
+    val width = remember(style, density, measurer) {
+        with(density) { (1..ScheduleMaxWeeks).maxOf { measurer.measure(it.toString(), style).size.width }.toDp() }
+    }
+    Row(Modifier.testTag("schedule-header-week"), verticalAlignment = Alignment.CenterVertically) {
+        Text((if (next) "下学期 · " else "") + "第 ", Modifier.testTag("schedule-week-prefix"), style = style, color = color)
+        ScheduleDateText(week.toString(), week.toLong(), "schedule-week-number", style, color,
+            modifier = Modifier.width(width), fillColumn = true)
+        Text(" 周", Modifier.testTag("schedule-week-suffix"), style = style, color = color)
+    }
 }
 
 @Composable
@@ -218,7 +243,8 @@ internal fun ScheduleViewToggle(dayView: Boolean, onChange: (Boolean) -> Unit, b
 @Composable
 private fun ScheduleDateStrip(anchor: String, week: Int, selectedDay: Int, dayCount: Int, today: Int?,
     backdrop: Backdrop?, height: androidx.compose.ui.unit.Dp, modifier: Modifier, onDayClick: (Int) -> Unit) {
-    val colors = MaterialTheme.colorScheme
+    val appearance = LocalWallpaperAppearanceColors.current
+    val accent = readableAccent(appearance)
     val labels = remember(dayCount) { (1..dayCount).map { "星期${"一二三四五六日"[it - 1]}" } }
     // One retained lens source for the whole strip. Zero edge padding keeps every
     // date centered on its timetable column, including narrow and large-font layouts.
@@ -238,9 +264,9 @@ private fun ScheduleDateStrip(anchor: String, week: Int, selectedDay: Int, dayCo
             ScheduleDateText(date.get(Calendar.DAY_OF_MONTH).toString(), timestamp = date.timeInMillis,
                 tag = "schedule-day-number-$day", modifier = Modifier.fillMaxWidth(), fillColumn = true,
                 style = ScheduleDateTypography.copy(fontSize = 15.sp, lineHeight = 19.sp, fontWeight = FontWeight.SemiBold),
-                color = if (today == day || selection >= 0.5f) colors.primary else colors.onSurface)
+                color = if (today == day || selection >= 0.5f) accent else appearance.onSurface)
             Box(Modifier.padding(top = 2.dp).size(3.dp)
-                .background(if (today == day) colors.primary else Color.Transparent, RoundedCornerShape(2.dp)))
+                .background(if (today == day) accent else Color.Transparent, RoundedCornerShape(2.dp)))
         }
     }
 }

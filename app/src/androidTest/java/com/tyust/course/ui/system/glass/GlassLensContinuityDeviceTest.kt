@@ -13,6 +13,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.movableContentOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -37,6 +39,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.tyust.course.BottomNavItem
 import com.tyust.course.ui.system.CapsuleNavigationBar
 import com.tyust.course.ui.system.LiquidSegmentedControl
+import com.tyust.course.ui.system.ProvideThemedContent
 import com.tyust.course.ui.theme.CourseSelectorTheme
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -53,6 +56,46 @@ class GlassLensContinuityDeviceTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
     @After fun clearCaptureObserver() { GlassLensCaptureObserver.onCaptured = null }
 
+    @Test fun reparentedLensRetainsOpticalFrameUntilRendererCatchesUp() {
+        val moved = mutableStateOf(false)
+        compose.setContent {
+            CourseSelectorTheme {
+                val anchor = rememberGlassLensAnchor("portal-continuity") {
+                    drawRect(Color.White)
+                    repeat(32) { x ->
+                        drawRect(if (x % 2 == 0) Color(0xFF153B89) else Color(0xFF91D3EC),
+                            Offset(x * 8.dp.toPx(), 0f), Size(8.dp.toPx(), size.height))
+                    }
+                }
+                val lens = remember { movableContentOf {
+                    Box(Modifier.size(180.dp, 56.dp).testTag("retained-lens")
+                        .glassLens(anchor, GlassLensOpticsProvider { _, h ->
+                            GlassLensOptics(h / 2f, h * .18f, h * .24f, 0f, 0f, 1f)
+                        }))
+                } }
+                Box(Modifier.size(240.dp, 96.dp).glassLensAnchor(anchor)) {
+                    Box { if (!moved.value) lens() }
+                    Box { if (moved.value) lens() }
+                }
+            }
+        }
+        compose.waitForIdle()
+        Thread.sleep(700)
+        fun capture() = compose.onNodeWithTag("retained-lens").captureToImage().asAndroidBitmap()
+        val before = capture()
+        val entered = CountDownLatch(1)
+        val unblock = CountDownLatch(1)
+        GlassLensEngine.post { entered.countDown(); unblock.await(8, TimeUnit.SECONDS) }
+        assertTrue(entered.await(3, TimeUnit.SECONDS))
+        try {
+            repeat(2) {
+                compose.runOnIdle { moved.value = !moved.value }
+                val after = capture()
+                assertTrue("Moving a lens between the page and portal must retain its optical pixels", before.sameAs(after))
+            }
+        } finally { unblock.countDown() }
+    }
+
     @Test fun segmentedLabelsUpdateWhileBackgroundReadbackIsBusy() {
         val capturedLabels = java.util.concurrent.atomic.AtomicReference<Bitmap?>()
         GlassLensCaptureObserver.onCaptured = { tag, _, bitmap ->
@@ -62,6 +105,9 @@ class GlassLensContinuityDeviceTest {
         compose.setContent {
             CourseSelectorTheme {
                 MaterialTheme(colorScheme = MaterialTheme.colorScheme.copy(primary = Color.Red)) {
+                // This fixture draws its own white surface and red theme; do not
+                // let the user's wallpaper replace the optical label palette.
+                ProvideThemedContent {
                 val backdrop = rememberLayerBackdrop()
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Box(Modifier.fillMaxSize().layerBackdrop(backdrop).background(Color.White))
@@ -71,6 +117,7 @@ class GlassLensContinuityDeviceTest {
                                 fontFamily = FontFamily.Monospace, fontWeight = FontWeight.ExtraBold,
                                 color = Color.Red)
                         })
+                }
                 }
                 }
             }

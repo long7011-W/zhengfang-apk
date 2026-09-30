@@ -45,11 +45,11 @@ data class PageMotion(val x: Float = 0f, val alpha: Float = 1f, val scale: Float
 class NavigationMotionState(initial: Int, private val scope: CoroutineScope) {
     private val progress = Animatable(1f)
     private val entrance = Animatable(0f)
-    private var entranceStarts = mapOf(initial to 0f)
+    private var entranceStarts by mutableStateOf(mapOf(initial to 0f))
     private var initialized = false
-    private var startPosition = initial.toFloat()
-    private var endPosition = initial.toFloat()
-    private var direction = 1f
+    private var startPosition by mutableFloatStateOf(initial.toFloat())
+    private var endPosition by mutableFloatStateOf(initial.toFloat())
+    private var direction by mutableFloatStateOf(1f)
     private var animation: Job? = null
     var target by mutableIntStateOf(initial)
         private set
@@ -79,7 +79,14 @@ class NavigationMotionState(initial: Int, private val scope: CoroutineScope) {
         initialized = true
         val current = releasedPosition ?: position
         val velocity = releasedVelocity ?: (progress.velocity * (endPosition - startPosition))
-        val snapshots = pages.keys.associateWith(::transform).filterValues { it.alpha > 0.001f }.toMutableMap()
+        // Retain the most visible outgoing page and the destination, not every
+        // interrupted transition. Detached pages release their lens captures.
+        val visible = pages.keys.associateWith(::transform).filterValues { it.alpha > 0.001f }
+        val outgoing = visible.filterKeys { it != page }.maxByOrNull { it.value.alpha }
+        val snapshots = mutableMapOf<Int, PageMotion>().apply {
+            outgoing?.let { put(it.key, it.value) }
+            visible[page]?.let { put(page, it) }
+        }
         val moduleSnapshots = pages.keys.associateWith(::moduleProgress).toMutableMap()
         moduleSnapshots.putIfAbsent(page, 0f)
         entranceStarts = moduleSnapshots

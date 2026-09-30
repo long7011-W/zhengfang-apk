@@ -410,7 +410,7 @@ public class UserManager {
     }
 
     private boolean hasPluginAuthentication() {
-        return currentSchool != null && com.tyust.course.academic.plugin.AcademicProviderRegistry.INSTANCE.overrides(currentSchool, "auth.start");
+        return currentSchool != null && com.tyust.course.login.PasswordLoginGatewayFactory.INSTANCE.usesPluginAuthentication(currentSchool);
     }
 
     /**

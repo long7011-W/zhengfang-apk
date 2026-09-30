@@ -11,7 +11,7 @@ sealed class GrabRunEvent {
     data class Attempt(val number: Int) : GrabRunEvent()
     data class Success(val item: AcademicGrabItem, val result: SelectionResult) : GrabRunEvent()
     data class Waiting(val item: AcademicGrabItem, val status: AcademicStatus, val message: String) : GrabRunEvent()
-    data class Paused(val item: AcademicGrabItem, val status: AcademicStatus, val message: String) : GrabRunEvent()
+    data class Paused(val item: AcademicGrabItem, val status: AcademicStatus, val message: String, val submissionUnsupported: Boolean = false) : GrabRunEvent()
     data class Exhausted(val item: AcademicGrabItem) : GrabRunEvent()
 }
 
@@ -88,7 +88,7 @@ class ProtocolGrabRunner(
         return when (result.status) {
             AcademicStatus.NO_CAPACITY, AcademicStatus.NETWORK_RETRYABLE, AcademicStatus.ROUND_CLOSED ->
                 GrabRunEvent.Waiting(item, result.status, result.message)
-            else -> GrabRunEvent.Paused(item, result.status, result.message)
+            else -> GrabRunEvent.Paused(item, result.status, result.message, submissionUnsupported = result.status == AcademicStatus.UNSUPPORTED)
         }
     }
 

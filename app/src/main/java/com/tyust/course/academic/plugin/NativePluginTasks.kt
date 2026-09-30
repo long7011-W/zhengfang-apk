@@ -99,7 +99,7 @@ class NativePluginJobService : JobService() {
                     session.key.accountKey == record.getString("accountKey") && accounts.current(pkg, session) &&
                     NativePluginTasks.load(this@NativePluginJobService, handle).getString("status") == "running"
                 if (!active()) { session.retire(); throw PluginException(PluginErrorCode.STALE_CONTEXT, "后台任务的账号或插件已改变") }
-                host = NativeCapabilityHost(this@NativePluginJobService, pkg, session, null, ::active)
+                host = NativeCapabilityHost(this@NativePluginJobService, pkg, session, null, active = ::active)
                 var state: Any = record.get("state")
                 val pending = ArrayDeque<JSONObject?>().apply { add(null) }
                 while (pending.isNotEmpty()) {

@@ -102,17 +102,17 @@ class CompactConsoleDeviceTest {
         }
         for (scale in listOf(1f, 1.6f)) {
             compose.runOnIdle { font.floatValue = scale }
-            compose.onNodeWithContentDescription("模糊监控").performTouchInput { click() }
-            compose.onNodeWithContentDescription("模糊监控").assertIsSelected()
-            compose.onNodeWithContentDescription("精确执行").performTouchInput { click() }
-            compose.onNodeWithContentDescription("精确执行").assertIsSelected()
+            compose.onNodeWithContentDescription("模糊匹配").performTouchInput { click() }
+            compose.onNodeWithContentDescription("模糊匹配").assertIsSelected()
+            compose.onNodeWithContentDescription("精确匹配").performTouchInput { click() }
+            compose.onNodeWithContentDescription("精确匹配").assertIsSelected()
             compose.onNodeWithTag("task-mode-timing").performTouchInput { click() }
             val selector = compose.onNodeWithTag("task-matching-selector").fetchSemanticsNode().boundsInRoot
             val timing = compose.onNodeWithTag("task-mode-timing").fetchSemanticsNode().boundsInRoot
             assertTrue(selector.right < timing.left)
         }
         compose.runOnIdle { assertEquals(2, timingOpens); assertFalse(fuzzy.value); enabled.value = false }
-        compose.onNodeWithContentDescription("精确执行").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("精确匹配").assertIsNotEnabled()
         compose.onNodeWithTag("task-mode-timing").assertIsNotEnabled()
     }
 
@@ -138,7 +138,7 @@ class CompactConsoleDeviceTest {
         compose.runOnIdle { assertTrue(scheduled.value); assertEquals(1, pickerOpens) }
         compose.onNodeWithTag("task-cancel-timing").performClick()
         compose.runOnIdle { assertFalse(scheduled.value) }
-        compose.onNodeWithContentDescription("精确执行").assertIsEnabled()
+        compose.onNodeWithContentDescription("精确匹配").assertIsEnabled()
         compose.onNodeWithTag("task-mode-timing").performClick()
         compose.onNodeWithContentDescription("创建定时任务").performClick()
         compose.onNodeWithTag("task-mode-timing").assertIsNotEnabled()

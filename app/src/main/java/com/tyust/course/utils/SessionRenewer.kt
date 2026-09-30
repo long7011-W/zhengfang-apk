@@ -34,7 +34,8 @@ object SessionRenewer {
                     override fun onCaptchaRequired(imageBytes: ByteArray) = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.VerificationRequired))
                     override fun onCaptchaInvalid() = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.VerificationRequired))
                     override fun onInvalidCredentials() = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.CredentialsRejected))
-                    override fun onError(message: String) = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.Network))
+                    override fun onWebLoginRequired(message: String) = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.VerificationRequired, message))
+                    override fun onError(message: String) = complete(LoginRecoveryOutcome.Failure(RecoveryFailure.Login, message))
                 })
                 val cancel: () -> Unit = { gateway.clearSensitiveState() }
                 cancel

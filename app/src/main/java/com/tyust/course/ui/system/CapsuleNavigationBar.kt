@@ -1,5 +1,11 @@
 package com.tyust.course.ui.system
 
+import androidx.compose.ui.layout.onGloballyPositioned
+
+import androidx.compose.ui.graphics.drawscope.withTransform
+
+import com.tyust.course.ui.system.glass.GlassLensContentSnapshot
+
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.EaseOut
 import androidx.compose.animation.core.animateFloatAsState
@@ -351,7 +357,7 @@ private fun GlassNavigationBar(
     // 只含 tint 文字、不含模糊壁纸、**也不含胶囊裁边**的副本，供 API31/32 的
     // 离屏折射采样。它挂在 drawBackdrop 之后（见下面 :664），所以录到的只有
     // 下游的文字。底图的模糊层由锚点自己铺满重画，理由见 lensAnchor 处。
-    val tabsTintBackdrop = rememberLayerBackdrop()
+    val tabsTintSnapshot = remember { GlassLensContentSnapshot() }
     val accessibility = rememberGlassAccessibilityMode()
     val latestOnTabSelect by rememberUpdatedState(onTabSelect)
     // 平台是否真出折射/色散（API 33+）
@@ -438,8 +444,8 @@ private fun GlassNavigationBar(
     // 有折射外观时取配方的 10dp（33+ 一直是这个值），≤30 保留 cba2a09 的 8dp。
     val trackBlurDp = if (hasLensLook) barMaterial.blurDp else GlassRecipe.NavLegacyTrackBlurDp
     val trackBlurPx = with(outerDensity) { trackBlurDp.dp.toPx() }
-    val lensAnchor = rememberGlassLensAnchor(tag = "navbar", overlaySource = { coords ->
-        with(tabsTintBackdrop) { drawBackdrop(outerDensity, coords, null) }
+    val lensAnchor = rememberGlassLensAnchor(tag = "navbar", rasterizeOverlayOnCpu = true, overlaySource = { coords ->
+        tabsTintSnapshot.draw(this, coords)
     }) { coords ->
         // 1) 模糊的壁纸/页面，**铺满整个锚点**，无形状。
         //
@@ -505,15 +511,6 @@ private fun GlassNavigationBar(
             lensAnchor.invalidateBackground()
         }
     }
-    // Draw-only bookkeeping: snapshot notifications can precede the hidden layer's
-    // final recording. Publish freshness after that layer actually draws instead.
-    val recordedOverlayFrame = remember(lensAnchor, tabsCount) {
-        FloatArray(tabsCount + 3) { Float.NaN }
-    }
-    val overlayFrameHandler = remember(lensAnchor) {
-        android.os.Handler(android.os.Looper.getMainLooper())
-    }
-
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxWidth()
@@ -842,31 +839,22 @@ private fun GlassNavigationBar(
                 //
                 // 只在离屏折射路径上挂：录层是**每帧**的离屏绘制开销，而 33+
                 // 没有任何东西消费 tabsTintBackdrop，挂着就是白烧一层。
-                .then(
-                    if (lensAnchor != null) Modifier.drawWithContent {
-                        var changed = false
-                        fun record(index: Int, value: Float) {
-                            if (recordedOverlayFrame[index] != value) {
-                                recordedOverlayFrame[index] = value
-                                changed = true
-                            }
-                        }
-                        record(0, selectedPosition())
-                        record(1, dampedDragAnimation.pressProgress)
-                        record(2, panelOffset)
-                        items.indices.forEach { record(it + 3, iconPlayback.phase(it)) }
-                        drawContent()
-                        if (changed) {
-                            // Child RenderNodes are committed at the end of this draw.
-                            // Capturing inside it can still read the previous fill.
-                            overlayFrameHandler.post { lensAnchor.invalidateOverlay() }
-                        }
-                    }.layerBackdrop(tabsTintBackdrop) else Modifier
-                )
+                .onGloballyPositioned { tabsTintSnapshot.coordinates = it }
+                .drawWithContent {
+                    // Subscribe the parent recording on BOTH render paths. A child icon's
+                    // RenderNode invalidation alone can leave the sampled copy on its old pose.
+                    items.indices.forEach { iconPlayback.phase(it) }
+                    selectedPosition()
+                    dampedDragAnimation.pressProgress
+                    if (lensAnchor != null) {
+                        tabsTintSnapshot.record(this, ColorFilter.tint(accentColor))
+                        lensAnchor.invalidateOverlay()
+                        tabsTintSnapshot.draw(this)
+                    } else drawContent()
+                }
                 .height(indicatorHeight)
                 .fillMaxWidth()
-                .padding(horizontal = barPadding)
-                .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
+                .padding(horizontal = barPadding),
             verticalAlignment = Alignment.CenterVertically
         ) {
             items.forEachIndexed { index, item ->
@@ -1178,7 +1166,7 @@ private fun RowScope.NavTab(
 
     Column(
         modifier = Modifier
-            .clip(RoundedCornerShape(16.dp))
+            .then(if (onClick != null) Modifier.clip(RoundedCornerShape(16.dp)) else Modifier)
             .then(clickModifier)
             .fillMaxHeight()
             .weight(1f),
@@ -1192,13 +1180,15 @@ private fun RowScope.NavTab(
             tint = iconTint,
             modifier = Modifier
                 .size(24.dp)
-                .graphicsLayer {
-                    // 局部填充负责辨识，轻微位移与缩放跟随同一份透镜状态。
-                    // 保留当前按压下沉，同时恢复底栏原有的选中放大和上浮幅度。
+                .drawWithContent {
+                    // Freeze transforms into the optical snapshot instead of retaining a
+                    // mutable child hardware layer with an old icon frame.
                     val scale = (1f + 0.10f * weight) * (1f - 0.04f * pressProgress)
-                    scaleX = scale
-                    scaleY = scale
-                    translationY = -2.dp.toPx() * weight + 1.dp.toPx() * pressProgress
+                    val offsetY = -2.dp.toPx() * weight + 1.dp.toPx() * pressProgress
+                    withTransform({
+                        translate(0f, offsetY)
+                        scale(scale, scale, center)
+                    }) { this@drawWithContent.drawContent() }
                 }
         )
         // Both faces reserve their measured size throughout the transition.

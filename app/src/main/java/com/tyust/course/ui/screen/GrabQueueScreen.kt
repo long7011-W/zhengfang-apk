@@ -129,14 +129,13 @@ fun LazyListScope.grabQueueItems(
         }
         
         if (supportsManualAdd) item {
-            // 添加课程按钮
+            Box(Modifier.fillMaxWidth().padding(vertical = 8.dp).moduleEntrance(2)) {
             SystemSecondaryButton(
                 text = "添加课程",
                 onClick = onAddCourse,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .moduleEntrance(2)
-                    .padding(vertical = 8.dp),
+                    .testTag("grab-add-course"),
                 enabled = editable,
                 leadingIcon = {
                     ActionLineIcon(
@@ -146,6 +145,7 @@ fun LazyListScope.grabQueueItems(
                     )
                 }
             )
+            }
         }
     }
 }

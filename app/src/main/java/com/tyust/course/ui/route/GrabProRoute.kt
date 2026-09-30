@@ -167,11 +167,6 @@ fun GrabProRoute() {
     var showAddCourseDialog by remember { mutableStateOf(false) }
     var manualCourseInput by remember { mutableStateOf("") }
     // 🔧 新增：分开的输入框状态
-    var inputCourseName by remember { mutableStateOf("") }
-    var inputTeachingClass by remember { mutableStateOf("") }
-    var inputTeacher by remember { mutableStateOf("") }
-    var selectedWeekday by remember { mutableStateOf("") }
-    var selectedPeriod by remember { mutableStateOf("") }
     
     // 警告对话框控制
     var showScheduleWarning by remember {
@@ -848,157 +843,21 @@ fun GrabProRoute() {
     }
 
     // 手动添加课程对话框 - 🔧 改进版：独立输入框 + 时间选择器
-    if (showAddCourseDialog) {
-        val weekdays = listOf("", "周一", "周二", "周三", "周四", "周五", "周六", "周日")
-        val periods = listOf("", "1-2节", "3-4节", "5-6节", "7-8节", "9-10节", "11-12节")
-        
-        SystemDialog(
-            onDismissRequest = { 
-                showAddCourseDialog = false
-                inputCourseName = ""
-                inputTeachingClass = ""
-                inputTeacher = ""
-                selectedWeekday = ""
-                selectedPeriod = ""
-            },
-            title = { Text("添加课程到队列") },
-            content = {
-                Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    // 课程名（必填）
-                    com.tyust.course.ui.screen.SchoolFormField(
-                        value = inputCourseName,
-                        onValueChange = { inputCourseName = it },
-                        label = "课程名称",
-                        placeholder = "例如：高等数学",
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    
-                    com.tyust.course.ui.screen.SchoolFormField(
-                        value = inputTeachingClass,
-                        onValueChange = { inputTeachingClass = it },
-                        label = "教学班（选填）",
-                        placeholder = "例如：篮球0003",
-                        helper = "按教学班名称匹配，留空则不限",
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // 教师（选填）
-                    com.tyust.course.ui.screen.SchoolFormField(
-                        value = inputTeacher,
-                        onValueChange = { inputTeacher = it },
-                        label = "教师（选填）",
-                        placeholder = "例如：张老师",
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
-                    
-                    // 时间选择（选填）
-                    Text("上课时间（选填）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("周几", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        SystemPicker(
-                            options = weekdays.map { it.ifBlank { "不限" } },
-                            selectedIndex = weekdays.indexOf(selectedWeekday).takeIf { it >= 0 },
-                            onSelect = { index -> selectedWeekday = weekdays[index] },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = ""
-                        )
-                        }
-                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("节次", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        SystemPicker(
-                            options = periods.map { it.ifBlank { "不限" } },
-                            selectedIndex = periods.indexOf(selectedPeriod).takeIf { it >= 0 },
-                            onSelect = { index -> selectedPeriod = periods[index] },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = ""
-                        )
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                SystemPrimaryButton(
-                    text = "添加",
-                    onClick = {
-                        if (inputCourseName.isNotBlank()) {
-                            // 构造时间字符串
-                            val timeStr = buildString {
-                                if (selectedWeekday.isNotEmpty()) append(selectedWeekday)
-                                if (selectedPeriod.isNotEmpty()) {
-                                    if (isNotEmpty()) append(" ")
-                                    append(selectedPeriod)
-                                }
-                            }
-                            
-                            val tempCourse = com.tyust.course.model.Course().apply {
-                                name = inputCourseName.trim()
-                                teachingClassFilter = inputTeachingClass.trim()
-                                jxbmc = teachingClassFilter
-                                teacher = inputTeacher.trim()
-                                time = timeStr
-                                courseId = "manual_${System.currentTimeMillis()}"
-                                useExactMatch = false // 手动输入强制使用智能模式
-                            }
-                            val added = if (isDemoMode) {
-                                if (queue.any { it == tempCourse }) {
-                                    false
-                                } else {
-                                    queue = queue + tempCourse
-                                    true
-                                }
-                            } else {
-                                SmartSelector.getInstance().addToQueue(tempCourse)
-                            }
-                            if (added) {
-                                // 🔧 添加时重置该课程的状态，防止显示之前的“失败”状态
-                                val courseKey = tempCourse.queueStatusKey
-                                val newStatuses = queueItemStatuses.toMutableMap()
-                                newStatuses[courseKey] = com.tyust.course.ui.screen.GrabQueueItemStatus.WAITING
-                                queueItemStatuses = newStatuses
-                                saveQueueStatuses()
-                                
-                                refreshQueue()
-                                val displayInfo = buildString {
-                                    append(tempCourse.name)
-                                    if (tempCourse.jxbmc.isNotEmpty()) append(" | ${tempCourse.jxbmc}")
-                                    if (tempCourse.teacher.isNotEmpty()) append(" | ${tempCourse.teacher}")
-                                    if (tempCourse.time.isNotEmpty()) append(" | ${tempCourse.time}")
-                                }
-                                GlassToaster.show("已添加：$displayInfo")
-                            } else {
-                                GlassToaster.show("课程「${tempCourse.name}」已在队列中")
-                            }
-                            // 清空输入
-                            inputCourseName = ""
-                            inputTeachingClass = ""
-                            inputTeacher = ""
-                            selectedWeekday = ""
-                            selectedPeriod = ""
-                        }
-                        showAddCourseDialog = false
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = inputCourseName.isNotBlank()
-                )
-            },
-            dismissButton = {
-                SystemSecondaryButton(
-                    text = "取消",
-                    onClick = {
-                        showAddCourseDialog = false
-                        inputCourseName = ""
-                        inputTeachingClass = ""
-                        inputTeacher = ""
-                        selectedWeekday = ""
-                        selectedPeriod = ""
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                )
+    if (showAddCourseDialog) com.tyust.course.ui.screen.ManualGrabCourseDialog(
+        enabled = !isRunning && !hasScheduledTask, onDismiss = { showAddCourseDialog = false }, onAdd = { draft ->
+            val course = com.tyust.course.model.Course().apply {
+                name = draft.name; teachingClassFilter = draft.section; jxbmc = draft.section
+                teacher = draft.teacher; time = draft.time
+                courseId = "manual_${System.currentTimeMillis()}"; useExactMatch = false
             }
-        )
-    }
+            val added = if (isDemoMode) {
+                if (queue.any { it == course }) false else { queue = queue + course; true }
+            } else SmartSelector.getInstance().addToQueue(course)
+            if (added) {
+                queueItemStatuses = queueItemStatuses + (course.queueStatusKey to GrabQueueItemStatus.WAITING)
+                saveQueueStatuses(); refreshQueue()
+                GlassToaster.show("已添加：${course.name}")
+            } else GlassToaster.show("该课程已在队列中")
+            added
+        })
 }

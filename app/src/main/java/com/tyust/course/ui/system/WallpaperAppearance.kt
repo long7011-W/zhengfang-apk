@@ -93,6 +93,7 @@ fun rememberWallpaperRegionAppearance(
     state: WallpaperRegionState? = null,
     darkTheme: Boolean = com.tyust.course.ui.theme.LocalAppAppearance.current.isDark
 ): WallpaperAppearanceColors {
+    LocalGlassAppearanceOverride.current?.let { return it }
     val view = LocalView.current
     val metrics = view.resources.displayMetrics
     val viewportWidth = view.width.takeIf { it > 0 } ?: metrics.widthPixels
@@ -120,7 +121,7 @@ fun rememberWallpaperRegionAppearance(
     if (!AppearanceSettingsManager.glassEffectEnabled) return if (darkTheme) WallpaperAppearanceColors(
         Color(0xFF171B22), Color(0xFF171B22), Color(0xFFF6F7FB), Color(0xFFB3BDCC), Color(0xFF424854), false
     ) else WallpaperAppearanceColors.Light.copy(surface = Color(0xFFE9E9EE))
-    if (darkTheme) return WallpaperAppearanceColors(
+    if (darkTheme && AppearanceSettingsManager.mode == com.tyust.course.manager.WallpaperMode.Preset) return WallpaperAppearanceColors(
         surface = Color(0xFF171B22).copy(alpha = if (resolved.usesDarkForeground) 0.88f else 0.78f),
         solidSurface = Color(0xFF171B22),
         onSurface = Color(0xFFF6F7FB),
@@ -130,10 +131,15 @@ fun rememberWallpaperRegionAppearance(
     )
     val surfaceTarget = Color(resolved.surfaceArgb).copy(alpha = resolved.surfaceAlpha)
     val foregroundTarget = Color(resolved.foregroundArgb)
-    val variantTarget = foregroundTarget.copy(alpha = 0.68f)
+    // The tone map's contrast guarantee is for the resolved opaque foreground.
+    // Fading secondary text on a photograph can erase that guarantee completely.
+    val variantTarget = if (AppearanceSettingsManager.mode == com.tyust.course.manager.WallpaperMode.Preset)
+        foregroundTarget.copy(alpha = 0.68f) else foregroundTarget
     val borderTarget = Color(resolved.borderArgb).copy(alpha = if (resolved.isMixed) 0.24f else 0.16f)
     val solidTarget = if (resolved.usesDarkForeground) Color(0xFFE9E9EE) else Color(0xFF2C2C2E)
-    val animation = tween<Color>(durationMillis = 150)
+    // Do not interpolate dark text through grey on a newly light/dark image.
+    // A polarity change must use the matching foreground and backing together.
+    val animation = tween<Color>(durationMillis = 0)
     val surface by animateColorAsState(surfaceTarget, animation, label = "wallpaperSurface")
     val solidSurface by animateColorAsState(solidTarget, animation, label = "wallpaperSolidSurface")
     val foreground by animateColorAsState(foregroundTarget, animation, label = "wallpaperForeground")

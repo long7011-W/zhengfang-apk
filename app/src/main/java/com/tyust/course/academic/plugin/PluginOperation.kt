@@ -23,6 +23,7 @@ class PluginOperation(
     private val active = AtomicBoolean(true)
     private val calls = ConcurrentHashMap.newKeySet<Call>()
     private val mutation = AtomicBoolean(false)
+    private val businessMutation = AtomicBoolean(false)
     val mutationSent: Boolean get() = mutation.get()
     val context: JSONObject get() = JSONObject().put("schoolId", session.key.schoolId)
         .put("accountId", session.key.accountKey).put("sessionEpoch", epoch)
@@ -43,8 +44,16 @@ class PluginOperation(
         val workflowMutation = manifest.isNative && method == "workflow.step" && manifest.json.optJSONArray("services")?.let(PluginJson::objects).orEmpty().any { it.getString("name") == actionId && it.getString("kind") == "write" }
         if (!confirmed || method !in setOf("selection.select", "selection.drop") && !serviceMutation && !nativeMutation && !workflowMutation)
             throw PluginException(PluginErrorCode.VALIDATION_FAILED, "写入操作需要用户确认")
-        if (!mutation.compareAndSet(false, true))
+        if (!businessMutation.compareAndSet(false, true))
             throw PluginException(PluginErrorCode.RESULT_UNKNOWN, "单次调用不能重放写入请求")
+        mutation.set(true)
+    }
+    /** Only PluginHost's reviewed shared-request approval can reach this path. */
+    internal fun markReviewedReadState() {
+        requireActive()
+        if (!manifest.isService || method !in setOf("service.page", "service.action"))
+            throw PluginException(PluginErrorCode.PERMISSION_DENIED, "状态更新必须通过共享服务请求")
+        mutation.set(true)
     }
     fun register(call: Call) { calls.add(call); try { requireActive() } catch (e: Exception) { call.cancel(); calls.remove(call); throw e } }
     fun unregister(call: Call) { calls.remove(call) }

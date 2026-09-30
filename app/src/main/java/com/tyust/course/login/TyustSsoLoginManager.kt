@@ -70,7 +70,7 @@ class TyustSsoLoginManager internal constructor(
         synchronized(stateLock) {
             activeAttempt = attempt
         }
-        fetchLoginPage(attempt)
+        initializeTeachingSession(attempt)
     }
 
     override fun submitCaptcha(captchaCode: String, callback: PasswordLoginCallback) {
@@ -105,6 +105,29 @@ class TyustSsoLoginManager internal constructor(
         attempt.completed.set(true)
         attempt.currentCall?.cancel()
         attempt.eraseSensitiveState(clearCookies = true)
+    }
+
+    private fun initializeTeachingSession(attempt: LoginAttempt, retry: Int = 0) {
+        if (!isAllowed(endpoints.teachingService)) {
+            fail(attempt, "教务登录地址未通过安全校验")
+            return
+        }
+        // Enter through the teaching service like the browser. Its route Cookie pins
+        // the ticket callback to the same backend; starting at CAS can return a 404.
+        execute(attempt,
+            Request.Builder().url(endpoints.teachingService).header("User-Agent", USER_AGENT).get().build(),
+            onFailure = { fail(attempt, "无法连接教务登录入口") }
+        ) { response ->
+            response.use {
+                if (it.code == 404 && retry < 2) {
+                    // A missing backend may also set a sticky route. Only retry this
+                    // initial GET, before any password or one-use ticket is sent.
+                    attempt.cookieJar.clear()
+                    initializeTeachingSession(attempt, retry + 1)
+                } else if (it.isSuccessful || it.code in REDIRECT_CODES) fetchLoginPage(attempt)
+                else fail(attempt, "教务登录入口返回错误 (${it.code})，请稍后重试")
+            }
+        }
     }
 
     private fun fetchLoginPage(attempt: LoginAttempt) {
@@ -282,6 +305,10 @@ class TyustSsoLoginManager internal constructor(
 
             response.use {
                 val body = it.body?.string().orEmpty()
+                if (attempt.sawServiceTicket && it.request.url.host == endpoints.teachingBase.host && !it.isSuccessful) {
+                    fail(attempt, "统一认证已完成，但教务系统返回错误 (${it.code})，请稍后重试")
+                    return@use
+                }
                 if (isAuthenticatedIndex(it.request.url, body)) {
                     if (!attempt.sawServiceTicket) {
                         fail(attempt, "统一认证未返回有效服务票据")

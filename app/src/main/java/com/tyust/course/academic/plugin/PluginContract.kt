@@ -63,12 +63,19 @@ object PluginLimits {
     const val MEMORY_BYTES = 64L * 1024 * 1024
     const val STACK_BYTES = 1024L * 1024
     const val JS_MILLIS = 5_000L
+    // Authentication now includes the former native page parsing and crypto flow.
+    // Keep its CPU allowance separate from queries; async host/network time is excluded.
+    const val AUTH_JS_MILLIS = 15_000L
     const val WALL_MILLIS = 120_000L
     const val RESPONSE_BYTES = 5 * 1024 * 1024
     const val WIRE_BYTES = 8 * 1024 * 1024
     const val PACKAGE_BYTES = 2 * 1024 * 1024
     const val EXPANDED_BYTES = 8 * 1024 * 1024
+    // UI state and persistent preferences are small; temporary protocol data can
+    // include a multi-page course catalogue plus the original submission fields.
     const val STATE_BYTES = 256 * 1024
+    const val STORAGE_BYTES = 256 * 1024
+    const val SESSION_STATE_BYTES = 8 * 1024 * 1024
 }
 
 object PluginJson {
@@ -209,6 +216,7 @@ data class PluginManifest(val json: JSONObject) {
     val contributes: JSONObject get() = json.optJSONObject("contributes") ?: JSONObject()
     val permissions: Set<String> get() = PluginJson.strings(json.optJSONArray("permissions")).toSet()
     val service: JSONObject? get() = json.optJSONObject("service")
+    val sharesAcademicSession: Boolean get() = isService && service?.optBoolean("academicSession") == true
     val baseProvider: String? get() = json.optString("extends").takeIf(String::isNotBlank)
     val capabilities: Set<String> get() = PluginJson.strings(json.getJSONArray("capabilities")).toSet()
     val network: List<JSONObject> get() = PluginJson.objects(json.getJSONArray("network"))
@@ -216,6 +224,7 @@ data class PluginManifest(val json: JSONObject) {
 
     fun validate(schema: PluginSchema) {
         schema.validate(json)
+        PluginSecurityContract.validate(this)
         BuiltinAcademicInheritance.configuration(this)
         PluginPlatformContract.validate(this)
         if (kind in setOf("independent", "service", "native") && baseProvider != null || kind !in setOf("independent", "service", "native") && baseProvider == null) invalid("适配类型与内置继承关系不一致")

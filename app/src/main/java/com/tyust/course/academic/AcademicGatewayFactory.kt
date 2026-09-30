@@ -60,7 +60,7 @@ object AcademicGatewayFactory {
 
     /** Import the configured school's Cookie header from the login browser. */
     fun importCookie(school: SchoolConfig, accountStorageKey: String, header: String, replace: Boolean = true, username: String = "") {
-        val session = if (replace && !AcademicProviderRegistry.overrides(school, "auth.start")) sessions.replace(school.id, accountStorageKey, school.fullBasePath)
+        val session = if (replace && !com.tyust.course.login.PasswordLoginGatewayFactory.usesPluginAuthentication(school)) sessions.replace(school.id, accountStorageKey, school.fullBasePath)
             else sessions.session(school.id, accountStorageKey, school.fullBasePath)
         if (username.isNotBlank()) session.username = username
         if (!replace && session.cookieHeader().isNotBlank()) return

@@ -154,16 +154,22 @@ fun InsetGroupedSection(
     footer: String? = null,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Column(modifier = modifier.fillMaxWidth()) {
+    val region = rememberWallpaperRegionState()
+    val wallpaperColors = rememberReadableContentAppearance(region)
+    Column(modifier = modifier.fillMaxWidth().wallpaperRegion(region)) {
         if (!header.isNullOrBlank()) {
             Text(
                 text = header,
                 style = MaterialTheme.typography.labelMedium,
                 fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.85f),
-                modifier = Modifier.padding(start = 18.dp, bottom = 7.dp)
+                color = wallpaperColors.onSurfaceVariant,
+                modifier = Modifier.padding(start = 12.dp, bottom = 7.dp)
+                    .readableWallpaper(wallpaperColors).padding(horizontal = 6.dp, vertical = 3.dp)
             )
         }
+        // The card is tinted by the app theme. Its children must not inherit
+        // white wallpaper text when a light card sits on a dark photograph.
+        ProvideThemedContent {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -173,12 +179,14 @@ fun InsetGroupedSection(
                 .animateContentSize(animationSpec = MotionSpring.liquidSettle()),
             content = content
         )
+        }
         if (!footer.isNullOrBlank()) {
             Text(
                 text = footer,
                 style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                modifier = Modifier.padding(start = 18.dp, top = 7.dp)
+                color = wallpaperColors.onSurfaceVariant,
+                modifier = Modifier.padding(start = 12.dp, top = 7.dp)
+                    .readableWallpaper(wallpaperColors).padding(horizontal = 6.dp, vertical = 3.dp)
             )
         }
     }
@@ -500,11 +508,7 @@ fun GlassLoadingState(
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
         GlassLoadingIndicator()
-        Text(
-            text = text,
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        WallpaperCaption(text = text, style = MaterialTheme.typography.bodyMedium)
     }
 }
 

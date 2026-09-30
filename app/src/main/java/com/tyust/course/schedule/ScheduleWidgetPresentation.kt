@@ -44,8 +44,11 @@ internal data class ScheduleWidgetState(
             val agenda = ScheduleAgenda.calculate(snapshot.courses, snapshot.timeBase, now, zone)
             if (!snapshot.hasCache && snapshot.courses.isEmpty()) return empty("还没有本地课表", "同步课表", ScheduleWidgetAction.Sync, agenda)
             if (agenda.needsCalendar) return empty("请设置开学日期", "去设置", ScheduleWidgetAction.Calendar, agenda)
+            // A daily widget must not fill an empty slot with another day's lesson.
+            // Keep the agenda's cross-day prediction for other consumers and refresh at midnight.
+            val upcomingToday = agenda.today.filter { it.startsAt > now }
             val current = agenda.current.firstOrNull()
-            val primary = current ?: agenda.upcoming.firstOrNull()
+            val primary = current ?: upcomingToday.firstOrNull()
             if (primary == null) {
                 if (snapshot.courses.any { !ScheduleWeeks.parse(it.weeks).valid })
                     return empty("课程周次待核对", "查看课表", ScheduleWidgetAction.Today, agenda)
@@ -64,7 +67,7 @@ internal data class ScheduleWidgetState(
                 return ScheduleWidgetCourse(item, status, item.course.name, item.course.location.ifBlank { "教室待定" },
                     "${format("HH:mm", item.startsAt)}–${format("HH:mm", item.endsAt)}", dateLabel)
             }
-            val secondary = if (current != null) agenda.upcoming.firstOrNull() else agenda.upcoming.getOrNull(1)
+            val secondary = if (current != null) upcomingToday.firstOrNull() else upcomingToday.getOrNull(1)
             val heading = when {
                 agenda.today.isEmpty() -> "今天无课"
                 agenda.remaining(now) == 0 -> "今日已结束"
@@ -204,12 +207,7 @@ internal object ScheduleWidgetRenderer {
     }
 
     internal fun timelineItems(state: ScheduleWidgetState, limit: Int): List<ScheduleOccurrence> {
-        val date = SimpleDateFormat("yyyy-MM-dd", Locale.CHINA)
-        val upcoming = state.agenda?.upcoming.orEmpty()
-        val nextDate = upcoming.firstOrNull()?.let { date.format(Date(it.startsAt)) }
-        val today = state.agenda?.today.orEmpty().ifEmpty {
-            upcoming.takeWhile { date.format(Date(it.startsAt)) == nextDate }
-        }
+        val today = state.agenda?.today.orEmpty()
         if (today.size <= limit) return today
         val nextIndex = today.indexOfFirst { it.endsAt > state.now }.takeIf { it >= 0 } ?: today.lastIndex
         return today.drop(nextIndex.coerceAtMost((today.size - limit).coerceAtLeast(0))).take(limit)

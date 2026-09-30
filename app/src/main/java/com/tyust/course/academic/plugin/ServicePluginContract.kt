@@ -13,6 +13,10 @@ object ServicePluginContract {
         if (manifest.capabilities.any { it !in PluginManifest.AUTH && it !in setOf("service.page", "service.action") } ||
             "service.page" !in manifest.capabilities) invalid("校园服务不能替换教务能力")
         val password = config.getJSONObject("authentication").getString("mode") == "password"
+        if (manifest.sharesAcademicSession && (manifest.apiVersion != 3 || password ||
+            manifest.json.optJSONArray("requires")?.let(PluginJson::objects).orEmpty().none {
+                it.optString("name") == "academic.session.request" && it.optInt("version") >= 3
+            })) invalid("共享教务登录需要 API 3、none 认证方式和 academic.session.request 版本 3")
         if (password != manifest.capabilities.containsAll(PluginManifest.AUTH) || !password && manifest.capabilities.any { it in PluginManifest.AUTH })
             invalid("登录能力与认证方式不一致")
         val pages = unique(config.getJSONArray("pages"))

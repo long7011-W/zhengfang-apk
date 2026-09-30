@@ -32,6 +32,53 @@ import kotlin.math.abs
 class ScheduleDateAlignmentDeviceTest {
     @get:Rule val compose = createAndroidComposeRule<ComponentActivity>()
 
+    @Test fun weekNumberStaysCenteredWhenRollingBetweenOneAndTwoDigits() {
+        assumeTrue(BuildConfig.UI_PREVIEW)
+        var week by mutableIntStateOf(9)
+        var scale by mutableFloatStateOf(1f)
+        compose.setContent {
+            val density = LocalDensity.current
+            CompositionLocalProvider(LocalDensity provides Density(density.density, scale)) {
+                CourseSelectorTheme(darkTheme = false) {
+                    WeekHeaderCompact(week, {}, {}, firstWeekDate = "2026-09-07")
+                }
+            }
+        }
+        compose.mainClock.autoAdvance = false
+        fun settle() { compose.mainClock.advanceTimeBy(800); compose.waitForIdle() }
+        fun assertCentered(value: String) {
+            val node = compose.onNode(hasTestTag("schedule-week-number") and hasText(value), true)
+            val layouts = mutableListOf<TextLayoutResult>()
+            node.performSemanticsAction(SemanticsActions.GetTextLayoutResult) { it(layouts) }
+            val layout = layouts.single()
+            val first = layout.getBoundingBox(0)
+            val last = layout.getBoundingBox(value.lastIndex)
+            val slot = compose.onNodeWithTag("schedule-week-number-slot", true).fetchSemanticsNode()
+            val text = node.fetchSemanticsNode()
+            assertEquals("Week digits must share the slot center", slot.boundsInRoot.center.x,
+                text.positionInRoot.x + (first.left + last.right) / 2, 1f)
+            assertTrue("Both digits must fit", first.left >= 0f && last.right <= layout.size.width + 1f)
+        }
+        for (fontScale in listOf(1f, 1.3f, 1.5f)) {
+            compose.runOnIdle { scale = fontScale; week = 9 }; settle(); assertCentered("9")
+            val width = compose.onNodeWithTag("schedule-header-week", true).fetchSemanticsNode().size.width
+            for ((next, from, to, direction) in listOf(Triple(10, "9", "10") to 1, Triple(9, "10", "9") to -1)
+                .map { (change, direction) -> WeekTransition(change.first, change.second, change.third, direction) }) {
+                compose.runOnUiThread { week = next }
+                compose.mainClock.advanceTimeByFrame()
+                compose.mainClock.advanceTimeBy(64)
+                assertCentered(from); assertCentered(to)
+                val slot = compose.onNodeWithTag("schedule-week-number-slot", true).fetchSemanticsNode()
+                val incoming = compose.onNode(hasTestTag("schedule-week-number") and hasText(to), true).fetchSemanticsNode()
+                assertTrue("Week must roll in the selected direction", (incoming.positionInRoot.y - slot.positionInRoot.y) * direction > 0f)
+                settle(); assertCentered(to)
+                assertEquals(width, compose.onNodeWithTag("schedule-header-week", true).fetchSemanticsNode().size.width)
+            }
+        }
+    }
+
+    private data class WeekTransition(val next: Int, val from: String, val to: String, val direction: Int)
+
     @Test fun datesRollForwardAndBackwardWithoutMovingTheColumnCenters() {
         assumeTrue(BuildConfig.UI_PREVIEW)
         var week by mutableIntStateOf(1)

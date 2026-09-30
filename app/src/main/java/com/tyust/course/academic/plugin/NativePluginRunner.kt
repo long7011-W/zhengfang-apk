@@ -25,7 +25,7 @@ object NativePluginRunner {
         val operation = PluginOperation(session, pkg.manifest, method, development = !pkg.official, confirmed = confirmed, actionId = args.optString("name"), pageContext = pageContext, packageDigest = pkg.digest, scopeStillActive = active)
         try {
         operation.requireActive()
-        val host = PluginHost(operation, File(app.filesDir, "academic-plugin-storage"), PluginWebSessionCookies.jar(app, pkg, session, active))
+        val host = PluginHost(operation, File(app.filesDir, "academic-plugin-storage"), PluginWebSessionCookies.jar(app, pkg, session, active), dataGuard = PluginDataGuard(app, pkg))
         val result = PluginSandboxClient(app).execute(pkg.source, args, operation, host)
         operation.requireActive()
         val schema = PluginSchema(PluginJson.parse(app.assets.open("academic-plugin/contract.schema.json").bufferedReader().use { it.readText() }))

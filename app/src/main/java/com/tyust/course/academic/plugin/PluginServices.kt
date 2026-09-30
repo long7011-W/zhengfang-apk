@@ -63,6 +63,10 @@ class PluginServices(
             "services.discover" -> JSONArray(PluginServiceDirectory.discover(caller.manifest, available(), input.getString("name"), input.getInt("version")).map { it.identity() })
             "services.call", "workflow.prepare" -> {
                 val service = resolve(input, flow)
+                val callerData = PluginDataGuard(app, caller)
+                val providerData = PluginDataGuard(app, service.pkg)
+                providerData.inherit(callerData)
+                callerData.inherit(providerData)
                 val writes = service.contract.getString("kind") == "write"
                 if ((name == "workflow.prepare") != writes) throw PluginException(PluginErrorCode.PERMISSION_DENIED,
                     if (writes) "写入服务必须通过工作流预览和确认" else "只读服务使用普通服务调用")
@@ -76,6 +80,7 @@ class PluginServices(
                     val args = JSONObject(input.toString()).apply { remove("providerId") }
                     val result = NativePluginRunner.invoke(app, service.pkg, session,
                         if (writes) "workflow.prepare" else "services.invoke", args, JSONObject(), active = valid)
+                    callerData.inherit(providerData)
                     requireActive()
                     if (!valid()) throw PluginException(PluginErrorCode.STALE_CONTEXT, "服务提供方或账号已改变")
                     if (!writes) {

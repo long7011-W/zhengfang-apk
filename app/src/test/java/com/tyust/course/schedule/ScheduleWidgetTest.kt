@@ -204,19 +204,17 @@ class ScheduleWidgetTest {
         assertEquals(course.id, ScheduleWidgetState.from(snapshot(), now).primary?.course?.id)
     }
 
-    @Test fun idleWidgetsShowTheNextTwoOccurrencesWithExplicitCivilDates() {
+    @Test fun endedDayDoesNotAdvanceWidgetsToAFutureTeachingDay() {
         val idle = SimpleDateFormat("yyyy-MM-dd HH:mm").parse("2026-09-07 11:00")!!.time
         val next = course.copy(id = "tomorrow", day = 2)
         val later = course.copy(id = "later", day = 4)
         val state = ScheduleWidgetState.from(snapshot().copy(courses = listOf(course, next, later)), idle)
-        assertEquals("下一节", state.primary?.status)
-        assertEquals("随后", state.secondary?.status)
-        assertEquals("明天", state.primary?.dateLabel)
-        assertEquals("9/10", state.secondary?.dateLabel)
-        assertEquals("今日已结束", state.heading)
-        assertEquals("tomorrow", state.primary?.course?.id)
+        assertNull(state.primary)
+        assertNull(state.secondary)
+        assertEquals("今日课程已结束", state.message)
+        assertEquals(listOf(course.id), ScheduleWidgetRenderer.timelineItems(state, 6).map { it.course.id })
         val unknown = next.copy(weeks = "待安排")
-        assertEquals("later", ScheduleWidgetState.from(snapshot().copy(courses = listOf(unknown, later)), idle).primary?.course?.id)
+        assertNull(ScheduleWidgetState.from(snapshot().copy(courses = listOf(unknown, later)), idle).primary)
         assertNull(ScheduleWidgetState.from(snapshot().copy(courses = listOf(unknown)), idle).primary)
     }
 
@@ -259,15 +257,43 @@ class ScheduleWidgetTest {
         assertEquals("", repo.snapshot("a", "school", term.next().id).timeBase.firstWeekDate)
     }
 
-    @Test fun threeWidgetStylesKeepIndependentProvidersAndLabelUpcomingCoursesWhenTodayIsEmpty() {
+    @Test fun threeWidgetStylesKeepIndependentProvidersAndNeverFillTodayWithTomorrow() {
         assertEquals(3, ScheduleWidgetStyle.entries.map { it.provider }.distinct().size)
         val today = course.copy(id = "today", startPeriod = 2, endPeriod = 2)
         val tomorrow = today.copy(id = "tomorrow", day = 2)
         val state = ScheduleWidgetState.from(snapshot().copy(courses = listOf(course, today, tomorrow)), now)
         assertEquals(listOf(course.id, today.id), ScheduleWidgetRenderer.timelineItems(state, 6).map { it.course.id })
         val noClassesToday = ScheduleWidgetState.from(snapshot().copy(courses = listOf(tomorrow)), now)
-        assertEquals(listOf("tomorrow"), ScheduleWidgetRenderer.timelineItems(noClassesToday, 6).map { it.course.id })
-        assertEquals("明天", noClassesToday.primary?.dateLabel)
+        assertTrue(ScheduleWidgetRenderer.timelineItems(noClassesToday, 6).isEmpty())
+        assertNull(noClassesToday.primary)
+        assertNull(noClassesToday.secondary)
+        assertEquals("今天没有课程", noClassesToday.message)
+    }
+
+    @Test fun singleClassDayDoesNotBorrowTomorrowBeforeDuringOrAfterClass() {
+        val tomorrow = course.copy(id = "tomorrow", day = 2)
+        val data = snapshot().copy(courses = listOf(course, tomorrow))
+        for (clock in listOf("07:00", "08:10", "08:45", "23:59")) {
+            val time = SimpleDateFormat("yyyy-MM-dd HH:mm").parse("2026-09-07 $clock")!!.time
+            val state = ScheduleWidgetState.from(data, time)
+            assertNull("$clock must not show tomorrow in the second slot", state.secondary)
+            assertEquals(listOf(course.id), ScheduleWidgetRenderer.timelineItems(state, 6).map { it.course.id })
+            if (clock < "08:45") assertEquals(course.id, state.primary?.course?.id)
+            else {
+                assertNull(state.primary)
+                assertEquals("今日课程已结束", state.message)
+            }
+        }
+    }
+
+    @Test fun widgetAdvancesToTheNextDayAtLocalMidnight() {
+        val tomorrow = course.copy(id = "tomorrow", day = 2)
+        val midnight = SimpleDateFormat("yyyy-MM-dd HH:mm").parse("2026-09-08 00:00")!!.time
+        val state = ScheduleWidgetState.from(snapshot().copy(courses = listOf(course, tomorrow)), midnight)
+        assertEquals("tomorrow", state.primary?.course?.id)
+        assertEquals("", state.primary?.dateLabel)
+        assertNull(state.secondary)
+        assertEquals(listOf("tomorrow"), ScheduleWidgetRenderer.timelineItems(state, 6).map { it.course.id })
     }
 
     @Test @Config(sdk = [33]) @GraphicsMode(GraphicsMode.Mode.NATIVE)

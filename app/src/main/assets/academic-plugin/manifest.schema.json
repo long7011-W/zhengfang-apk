@@ -148,6 +148,61 @@
       "maxItems": 48,
       "uniqueItems": true
     },
+    "academicSessionToken": {
+      "type": "object",
+      "properties": {
+        "response": {
+          "type": "object",
+          "properties": {
+            "path": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "method": {
+              "enum": [
+                "GET",
+                "POST"
+              ]
+            },
+            "jsonPointer": {
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 512
+            }
+          },
+          "required": [
+            "path",
+            "method",
+            "jsonPointer"
+          ],
+          "additionalProperties": false
+        },
+        "request": {
+          "type": "object",
+          "properties": {
+            "pathPrefix": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1024
+            },
+            "header": {
+              "const": "X-Token"
+            }
+          },
+          "required": [
+            "pathPrefix",
+            "header"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "response",
+        "request"
+      ],
+      "additionalProperties": false
+    },
     "minAppVersionCode": {
       "type": "integer",
       "minimum": 1,
@@ -751,6 +806,163 @@
       "type": "string",
       "maxLength": 2000
     },
+    "dataDisclosure": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "properties": {
+          "origin": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "const": "academic"
+            },
+            "minItems": 1,
+            "maxItems": 1
+          },
+          "purpose": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500
+          }
+        },
+        "required": [
+          "origin",
+          "categories",
+          "purpose"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "sharedOperations": {
+      "type": "array",
+      "maxItems": 80,
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 96
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 160
+          },
+          "origin": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "path": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024
+          },
+          "method": {
+            "enum": [
+              "GET",
+              "POST"
+            ]
+          },
+          "purpose": {
+            "enum": [
+              "query",
+              "mutation"
+            ]
+          },
+          "risk": {
+            "enum": [
+              "read",
+              "read-state",
+              "high"
+            ]
+          },
+          "query": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "object"
+              },
+              "properties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object"
+                }
+              },
+              "required": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 96
+                },
+                "maxItems": 32
+              },
+              "additionalProperties": {
+                "const": false
+              }
+            },
+            "required": [
+              "type",
+              "properties",
+              "additionalProperties"
+            ],
+            "additionalProperties": false
+          },
+          "form": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "const": "object"
+              },
+              "properties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "object"
+                }
+              },
+              "required": {
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 96
+                },
+                "maxItems": 32
+              },
+              "additionalProperties": {
+                "const": false
+              }
+            },
+            "required": [
+              "type",
+              "properties",
+              "additionalProperties"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "origin",
+          "path",
+          "method",
+          "purpose",
+          "risk",
+          "query",
+          "form"
+        ],
+        "additionalProperties": false
+      }
+    },
     "network": {
       "type": "array",
       "items": {
@@ -879,6 +1091,9 @@
     "service": {
       "type": "object",
       "properties": {
+        "academicSession": {
+          "type": "boolean"
+        },
         "schoolIds": {
           "type": "array",
           "items": {

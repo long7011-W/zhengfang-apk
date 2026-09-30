@@ -23,7 +23,7 @@ import java.security.spec.X509EncodedKeySpec
 import java.util.UUID
 import java.util.zip.ZipInputStream
 
-data class PluginPackage(val manifest: PluginManifest, val source: String, val digest: String, val official: Boolean, val bundled: Boolean = false)
+data class PluginPackage(val manifest: PluginManifest, val source: String, val digest: String, val official: Boolean, val bundled: Boolean = false, val publisher: String? = null)
 
 object PluginPackageVerifier {
     // Some API 24 providers support EC keys and signatures but expose no EC
@@ -79,7 +79,7 @@ object PluginPackageVerifier {
         if ((manifest.kind != "configuration") != contents.containsKey("index.js")) invalid("插件入口与类型不一致")
         val signature = contents["signature.json"]?.let { PluginJson.parse(it.toString(Charsets.UTF_8)) }
         if (signature != null) verifySignature(manifest.json, signature, keys) else if (!allowDevelopment) badSignature()
-        return PluginPackage(manifest, contents["index.js"]?.toString(Charsets.UTF_8).orEmpty(), PluginJson.sha256(bytes), signature != null)
+        return PluginPackage(manifest, contents["index.js"]?.toString(Charsets.UTF_8).orEmpty(), PluginJson.sha256(bytes), signature != null, publisher = signature?.let { PluginJson.sha256(keys.getValue(it.getString("keyId")).encoded) })
     }
     private fun invalid(message: String): Nothing = throw PluginException(PluginErrorCode.VALIDATION_FAILED, message)
     private fun badSignature(): Nothing = throw PluginException(PluginErrorCode.BAD_SIGNATURE, "签名无效或签名密钥未受信任")
@@ -100,9 +100,11 @@ class PluginPackageStore(private val context: Context, private val trustedKeys: 
         if (candidate.source.isNotEmpty()) {
             val session = AcademicSessionStore().session(candidate.manifest.json.optJSONObject("school")?.optString("id") ?: candidate.manifest.id, "package-inspection", "https://invalid.example")
             val op = PluginOperation(session, candidate.manifest, "__inspect", development = true)
-            val actual = PluginSandboxClient(context).execute(candidate.source, JSONObject(), op, PluginHost(op, File(context.cacheDir, "plugin-inspection")))
-            if (PluginJson.strings(actual.getJSONArray("data")).toSet() != candidate.manifest.capabilities)
-                throw PluginException(PluginErrorCode.VALIDATION_FAILED, "实际能力与清单不一致")
+            try {
+                val actual = PluginSandboxClient(context).execute(candidate.source, JSONObject(), op, PluginHost(op, File(context.cacheDir, "plugin-inspection")))
+                if (PluginJson.strings(actual.getJSONArray("data")).toSet() != candidate.manifest.capabilities)
+                    throw PluginException(PluginErrorCode.VALIDATION_FAILED, "实际能力与清单不一致")
+            } finally { op.close(); session.retire() }
         }
         currentCoroutineContext().ensureActive()
         synchronized(lock) {
@@ -191,6 +193,7 @@ class PluginPackageStore(private val context: Context, private val trustedKeys: 
         digest in PluginWorkflowJournal(PluginWorkflowFiles(context)).references()
     fun deactivate(id: String) {
         PluginAcademicSession.revoke(context, id)
+        PluginDataGuard.revoke(context, id)
         val removed = synchronized(lock) {
             val previous = active(id)
             val state = state(); state.remove(id); save(state)

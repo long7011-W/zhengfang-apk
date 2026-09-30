@@ -24,7 +24,13 @@ import javax.crypto.spec.SecretKeySpec
 
 /** Host-side authority. Values supplied by the JS context are never used for account selection. */
 class PluginHost(private val operation: PluginOperation, private val storageRoot: File, cookies: CookieJar = operation.session.cookies,
+    private val captureToken: ((HttpUrl, String, String, Int, String) -> Unit)? = null,
+    private val sharedToken: ((HttpUrl) -> Pair<String, String>?)? = null,
+    private val tokenSession: com.tyust.course.academic.AcademicSession = operation.session,
+    private val dataGuard: PluginDataGuard? = null,
+    private val sharedApproval: ((JSONObject) -> Boolean)? = null,
     private val sharedRequest: ((HttpUrl, String, String, JSONObject?) -> Unit)? = null) {
+    private val cookiesForResponse: (HttpUrl) -> List<String> = { url -> cookies.loadForRequest(url).map { it.value } }
     private val policy = PluginNetworkPolicy(operation.manifest.network)
     private val client = OkHttpClient.Builder().cookieJar(cookies)
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
@@ -84,7 +90,19 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
         val charsetName = payload.optString("charset", "UTF-8")
         if (charsetName !in setOf("UTF-8", "GBK", "GB2312", "GB18030")) invalid("不支持的编码")
         val charset = Charset.forName(charsetName)
+        // Reject invalid destinations before asking the user anything.
+        policy.requireAllowed(url, method, purpose, form)
+        sharedRequest?.invoke(url, method, purpose, form)
+        val approvedReadState = sharedApproval?.invoke(JSONObject(payload.toString())) == true
         val supplied = JSONObject((payload.optJSONObject("headers") ?: JSONObject()).toString())
+        // Only the host's authorized shared-session path supplies this callback.
+        sharedRequest?.invoke(url, method, purpose, form)
+        val sessionToken = sharedToken?.invoke(url)
+        if (sessionToken != null) {
+            if (payload.has("cookieHeader") || supplied.keys().asSequence().any { it.equals("X-Token", true) || it.equals("Authorization", true) })
+                invalid("共享教务令牌不能与其他认证请求头混用")
+            supplied.put(sessionToken.first, sessionToken.second)
+        }
         val academicToken = sharedRequest != null || operation.manifest.apiVersion == 3 &&
             (operation.manifest.kind in setOf("independent", "extension") || operation.manifest.isNative && operation.manifest.isAcademic && operation.method.substringBefore('.') in setOf("auth", "study", "selection"))
         val scopedToken = operation.manifest.apiVersion == 3 && (operation.manifest.isService || operation.manifest.isNative) &&
@@ -146,9 +164,13 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
             authScope?.requireAllowed(url, method)
             val rule = policy.requireAllowed(url, method, purpose, form, if (token != null && !academicToken) "X-Token" else null)
             sharedRequest?.invoke(url, method, purpose, form)
+            if (sharedRequest == null) dataGuard?.requireNetwork(url)
+            if (sessionToken != null && sharedToken?.invoke(url) != sessionToken)
+                throw PluginException(PluginErrorCode.SESSION_EXPIRED, "教务令牌已改变，请重新发起请求")
             val userAgent = rule.optString("userAgent").ifBlank {
                 operation.manifest.json.optJSONObject("school")?.optString("userAgent").orEmpty()
             }.ifBlank { "ZhengfangAcademicPlugin/1" }
+            val requestSecrets = if (sharedRequest != null) cookiesForResponse(url) + listOfNotNull(sessionToken?.second) else emptyList()
             val builder = Request.Builder().url(url).header("User-Agent", userAgent)
             if (sameOriginReferer) builder.header("Referer", url.newBuilder().encodedPath("/").query(null).fragment(null).build().toString())
             supplied.keys().forEach { builder.header(it, supplied.getString(it)) }
@@ -162,12 +184,23 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
                     supplied.optString("Content-Type", "application/x-www-form-urlencoded; charset=$charsetName").toMediaType())
                 builder.post(body)
             }
-            if (purpose == "mutation") operation.markMutation()
+            if (purpose == "mutation") {
+                if (approvedReadState && sharedRequest != null) operation.markReviewedReadState()
+                else operation.markMutation()
+            }
             val call = transport.newCall(builder.build())
             operation.register(call)
+            dataGuard?.track(operation)
             try {
                 call.execute().use { response ->
                     operation.requireActive()
+                    if (sessionToken != null && response.code in setOf(401, 403)) {
+                        synchronized(tokenSession) {
+                            operation.requireActive()
+                            if (tokenSession.pluginToken?.header(url) == sessionToken) tokenSession.pluginToken = null
+                        }
+                        throw operation.failure(PluginErrorCode.SESSION_EXPIRED, "教务令牌已过期，请重新登录本校账号")
+                    }
                     if (log.size < 200) log += JSONObject().put("event", "http").put("origin", "${url.scheme}://${url.host}:${url.port}")
                         .put("method", method).put("purpose", purpose).put("status", response.code)
                     if (response.code in 300..399) {
@@ -189,6 +222,7 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
                         url = next.newBuilder().fragment(null).build()
                         method = "GET"
                         form = null
+                        sharedApproval?.invoke(JSONObject(payload.toString()).put("url", url.toString()).put("method", "GET").apply { remove("form"); remove("body") })
                     } else {
                         val stream = response.body?.source()
                         stream?.request(PluginLimits.RESPONSE_BYTES.toLong() + 1)
@@ -202,7 +236,13 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
                             "base64" -> bytes.toByteString().base64()
                             else -> invalid("不支持的响应格式")
                         }
+                        if (sharedRequest != null) {
+                            val secrets = requestSecrets + cookiesForResponse(url) + listOfNotNull(sessionToken?.second)
+                            PluginSecretResponse.requireSafe(bytes, responseUrl = url.toString(), secrets = secrets)
+                            dataGuard?.mark()
+                        }
                         val headers = JSONObject()
+                        captureToken?.invoke(url, method, purpose, response.code, bytes.toString(charset))
                         listOf("Content-Type", "Date", "Retry-After").forEach { name -> response.header(name)?.let { headers.put(name, it) } }
                         val responseUrl = url.newBuilder().encodedFragment(callbackFragment).build()
                         return JSONObject().put("status", response.code).put("url", responseUrl.toString()).put("headers", headers).put("body", body)
@@ -210,7 +250,7 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
                 }
             } catch (e: IOException) {
                 throw operation.failure(PluginErrorCode.NETWORK_RETRYABLE, "网络请求中断")
-            } finally { operation.unregister(call) }
+            } finally { operation.unregister(call); dataGuard?.untrack(operation) }
         }
     }
 
@@ -257,7 +297,10 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
                 "get" -> return values.opt(key) ?: JSONObject.NULL
                 "set" -> {
                     val candidate = JSONObject(values.toString()).put(key, payload.get("value"))
-                    if (candidate.toString().toByteArray().size > PluginLimits.STATE_BYTES) throw PluginException(PluginErrorCode.RESOURCE_LIMIT, "适配存储超过 256 KiB")
+                    val limit = if (persistent) PluginLimits.STORAGE_BYTES else PluginLimits.SESSION_STATE_BYTES
+                    if (candidate.toString().toByteArray(Charsets.UTF_8).size > limit) throw PluginException(
+                        PluginErrorCode.RESOURCE_LIMIT,
+                        if (persistent) "适配存储超过 256 KiB" else "教务会话缓存超过 8 MiB，请重新登录后重试")
                     values.put(key, payload.get("value"))
                 }
                 "remove" -> values.remove(key)

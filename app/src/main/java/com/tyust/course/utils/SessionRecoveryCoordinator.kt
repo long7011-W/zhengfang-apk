@@ -5,15 +5,15 @@ import com.tyust.course.manager.SessionToken
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
-enum class RecoveryFailure { NoPassword, VerificationRequired, CredentialsRejected, Network, Cooldown, Storage }
+enum class RecoveryFailure { NoPassword, VerificationRequired, CredentialsRejected, Network, Login, Cooldown, Storage }
 sealed interface SessionRecoveryResult {
     data class Recovered(val token: SessionToken) : SessionRecoveryResult
-    data class NeedsLogin(val reason: RecoveryFailure) : SessionRecoveryResult
+    data class NeedsLogin(val reason: RecoveryFailure, val message: String = "") : SessionRecoveryResult
     data object Superseded : SessionRecoveryResult
 }
 sealed interface LoginRecoveryOutcome {
     data class Cookie(val value: String) : LoginRecoveryOutcome
-    data class Failure(val reason: RecoveryFailure) : LoginRecoveryOutcome
+    data class Failure(val reason: RecoveryFailure, val message: String = "") : LoginRecoveryOutcome
 }
 enum class RecoveryPhase { Idle, Restoring, NeedsLogin }
 data class SessionRecoveryState(val token: SessionToken, val phase: RecoveryPhase, val reason: RecoveryFailure? = null)
@@ -75,8 +75,9 @@ class SessionRecoveryCoordinator(
         try {
             val cancel = login(expected) { complete(expected, operation, it) }
             if (pending[expected] === operation) operation.cancel = cancel else cancel()
-        } catch (_: Exception) {
-            complete(expected, operation, LoginRecoveryOutcome.Failure(RecoveryFailure.Network))
+        } catch (e: Exception) {
+            complete(expected, operation, LoginRecoveryOutcome.Failure(
+                if (e is java.io.IOException) RecoveryFailure.Network else RecoveryFailure.Login))
         }
     }
 
@@ -92,7 +93,7 @@ class SessionRecoveryCoordinator(
                     else -> SessionRecoveryResult.NeedsLogin(RecoveryFailure.Storage)
                 }
             }
-            is LoginRecoveryOutcome.Failure -> SessionRecoveryResult.NeedsLogin(outcome.reason)
+            is LoginRecoveryOutcome.Failure -> SessionRecoveryResult.NeedsLogin(outcome.reason, outcome.message)
         }
         when (result) {
             is SessionRecoveryResult.Recovered -> {

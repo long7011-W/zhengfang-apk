@@ -94,6 +94,7 @@
         <service
             android:name=".academic.plugin.runtime.PluginSandboxService"
             android:process=":academic_plugin"
+            android:isolatedProcess="true"
             android:exported="false" />
         <service
             android:name=".service.GrabService"

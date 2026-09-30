@@ -1,5 +1,9 @@
 package com.tyust.course.ui.system
 
+import androidx.compose.material3.LocalContentColor
+
+import com.tyust.course.ui.system.glass.rememberGlassLensRegion
+
 import android.graphics.BlurMaskFilter
 import android.view.WindowManager
 import androidx.compose.animation.core.animateFloatAsState
@@ -208,7 +212,7 @@ fun SystemTopBar(
         label = "headerCollapse"
     )
     val surfaceTint = appearance.surface.copy(
-        alpha = maxOf(appearance.surface.alpha, if (isLightTheme) 0.46f else 0.34f)
+        alpha = if (customWallpaper) appearance.surface.alpha else if (isLightTheme) 0.46f else 0.34f
     )
     com.tyust.course.ui.theme.ReportStatusBarSurface(surfaceTint.copy(alpha = surfaceTint.alpha * (if (customWallpaper) 1f else 0.85f + 0.15f * collapse)))
 
@@ -221,7 +225,8 @@ fun SystemTopBar(
     ) {
         val showShell = customWallpaper || collapse > 0.01f
         val shellModifier = when {
-            useGlass && backdrop != null && showShell -> Modifier
+            useGlass && backdrop != null -> Modifier
+                .graphicsLayer { alpha = if (customWallpaper) 1f else collapse }
                 // 下缘【齐边】收尾：渐隐抹在模糊结果上只是把"模糊的那一份"按 alpha 混到
                 // 清晰的原图上，两份图像叠在一起就是一条重影带（iOS 渐变的是模糊半径，
                 // 一次 drawBackdrop 做不到）。玻璃条本来就该有边——那圈默认高光已关掉。
@@ -241,7 +246,7 @@ fun SystemTopBar(
                     onDrawSurface = {
                         // 平铺即可：渐隐由 glassEdgeFadeBottom 统一做，
                         // 这里再叠一条渐变会让尾巴衰减得比线性更快。
-                        drawRect(surfaceTint.copy(alpha = surfaceTint.alpha * (if (customWallpaper) 1f else collapse)))
+                        drawRect(surfaceTint)
                     }
                 )
             !useGlass && showShell -> Modifier.background(
@@ -253,7 +258,11 @@ fun SystemTopBar(
             )
             else -> Modifier
         }
-        Box(modifier = Modifier.fillMaxWidth().then(shellModifier)) {
+        Box(modifier = Modifier.fillMaxWidth()) {
+            // Shell visibility belongs to the glass only. At rest on a preset
+            // wallpaper collapse is zero; applying this layer to the parent also
+            // hides the title, subtitle and buttons until the user scrolls.
+            Box(Modifier.matchParentSize().then(shellModifier))
             // 展开态：大标题背后铺一层自上而下的软渐变，
             // 内容滚入标题区域时被渐隐吞没而不是直接撞字；随折叠淡出交棒给玻璃条。
             if (collapse < 0.99f && !customWallpaper) {
@@ -366,7 +375,8 @@ fun GlassCircleButton(
                 shape = CircleShape,
                 optics = optics,
                 enabled = enabled,
-                interactive = enabled
+                interactive = enabled,
+                glyphColor = tint
             )
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
@@ -452,6 +462,8 @@ fun SystemCard(
         modifier = clickableModifier,
         shape = cardShape,
         color = effectiveColor,
+        contentColor = if (translucent) MaterialTheme.colorScheme.onSurface
+            else androidx.compose.material3.contentColorFor(backgroundColor),
         border = BorderStroke(
             width = 0.5.dp,
             brush = Brush.linearGradient(listOf(effectiveBorder, effectiveBorder.copy(alpha = effectiveBorder.alpha * 0.45f), effectiveBorder))
@@ -464,6 +476,7 @@ fun SystemCard(
         },
         tonalElevation = 0.dp
     ) {
+        ProvideThemedContent {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -471,6 +484,7 @@ fun SystemCard(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content
         )
+        }
     }
 }
 
@@ -481,8 +495,11 @@ fun SystemSectionHeader(
     actionLabel: String? = null,
     onActionClick: (() -> Unit)? = null
 ) {
+    val textRegion = rememberWallpaperRegionState()
+    val textAppearance = rememberReadableContentAppearance(textRegion)
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().wallpaperRegion(textRegion).readableWallpaper(textAppearance).padding(6.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -490,13 +507,13 @@ fun SystemSectionHeader(
                 text = title,
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurface
+                color = textAppearance.onSurface
             )
             if (!subtitle.isNullOrBlank()) {
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = textAppearance.onSurfaceVariant
                 )
             }
         }
@@ -573,16 +590,19 @@ fun SystemStatStrip(
     modifier: Modifier = Modifier,
     items: List<Pair<String, String>>
 ) {
+    val textRegion = rememberWallpaperRegionState()
+    val textAppearance = rememberReadableContentAppearance(textRegion)
+
     Row(
-        modifier = modifier.fillMaxWidth().padding(vertical = 8.dp),
+        modifier = modifier.fillMaxWidth().wallpaperRegion(textRegion).readableWallpaper(textAppearance).padding(8.dp),
         horizontalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         items.forEach { (label, value) ->
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 Text(value, style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
+                    fontWeight = FontWeight.SemiBold, color = textAppearance.onSurface)
                 Text(label, style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    color = textAppearance.onSurfaceVariant)
             }
         }
     }
@@ -738,14 +758,13 @@ fun SystemSecondaryButton(
     enabled: Boolean = true,
     leadingIcon: (@Composable () -> Unit)? = null
 ) {
-    val appearance = LocalWallpaperAppearanceColors.current
-    // iOS gray-fill：不透明浅灰胶囊，文字用 onSurface 实色，保证任何底色上都清晰。
+    // iOS gray-fill：不透明胶囊，保证任何底色上都清晰。填充跟主题（surfaceContainerHigh），
+    // 文字就必须也跟主题：取壁纸前景色的话，深色主题配浅色壁纸时是深灰底上的深色字。
     LiquidButton(
         onClick = onClick,
         modifier = modifier.height(52.dp),
         enabled = enabled,
         style = LiquidButtonStyle.SolidSurface,
-        contentColor = appearance.onSurface,
         shape = Capsule()
     ) {
         if (leadingIcon != null) leadingIcon()
@@ -791,11 +810,15 @@ fun SystemEmptyState(
     icon: ImageVector = Icons.Outlined.Inbox,
     action: (@Composable () -> Unit)? = null
 ) {
+    val textRegion = rememberWallpaperRegionState()
+    val textAppearance = rememberReadableContentAppearance(textRegion)
+
     val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .padding(horizontal = 32.dp, vertical = 48.dp),
+            .padding(horizontal = 32.dp, vertical = 48.dp)
+            .wallpaperRegion(textRegion).readableWallpaper(textAppearance).padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -816,20 +839,20 @@ fun SystemEmptyState(
             contentAlignment = Alignment.Center
         ) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(26.dp),
-                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                tint = textAppearance.onSurfaceVariant)
         }
         Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = title,
             style = MaterialTheme.typography.titleMedium,
             fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurface,
+            color = textAppearance.onSurface,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
         Text(
             text = message,
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = textAppearance.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
         if (action != null) {
@@ -853,7 +876,7 @@ fun SystemIconButton(
     icon: ImageVector,
     contentDescription: String?,
     onClick: () -> Unit,
-    tint: Color = MaterialTheme.colorScheme.onSurface,
+    tint: Color = LocalContentColor.current,
     enabled: Boolean = true,
     /** 顶栏/工具栏级别的图标按钮默认带玻璃芯片；行内小按钮传 false。 */
     chip: Boolean = true,
@@ -1114,11 +1137,11 @@ private fun SystemDialogContent(
     )
     val glassBackdrop = backdrop?.takeIf { useVisualEffects && isBackdropSupported() }
     val regionState = rememberWallpaperRegionState()
-    val appearance = rememberWallpaperRegionAppearance(regionState)
+    val appearance = themedSurfaceAppearance()
     val isLightTheme = appearance.usesDarkForeground
     // Keep the optics, but give text a sufficiently opaque surface on busy wallpapers.
     val dialogSurfaceColor = appearance.surface.copy(
-        alpha = maxOf(appearance.surface.alpha, modalSurfaceAlpha(!isLightTheme, accessibility.highContrast))
+        alpha = modalSurfaceAlpha(!isLightTheme, accessibility.highContrast)
     )
     val dialogBorderColor = appearance.border
     val dialogShadowColor = Color.Black.copy(alpha = dialogMaterial.shadowAlpha)
@@ -1136,18 +1159,15 @@ private fun SystemDialogContent(
     // vibrancy → blur → lens，lens 采的是已经模糊过的像素，而那层模糊只能烤进
     // 底图（见 LocalGlassLensModalAnchor）。
     //
-    // 卡片**里面**没有再建区域：弹窗内的按钮一律是 SolidSurface / SolidTinted
-    // （见 SystemPrimaryButton，实色是刻意的，"避免玻璃叠玻璃发糊"），
-    // 它们的 glassBackdrop 为 null，压根不折射；`glassChip` 也只有 alpha + 描边。
-    // 所以那份区域会是一张没人读的全屏快照（8MB + 每次开弹窗约 5ms）。
-    //
-    // 将来若真往弹窗里放会折射的控件：它采样的是 `combined(页面, 卡片自己)`，
-    // 得在这里建一份区域、底图重建那个组合、取景框挂在卡片这个 Box 上
-    // （卡片有 20~24dp 内边距，比控件大一圈，边缘位移采样不会跑出底图），
-    // 再用 `LocalGlassLensAnchor provides` 覆盖掉全局那份 —— 全局那份只有壁纸，
-    // 直接拿来会让控件折射出"卡片不存在"的画面。
+    // Nested pickers sample the page plus this panel, not the root wallpaper alone.
     val dialogDensity = LocalDensity.current
     val panelLensAnchor = LocalGlassLensModalAnchor.current
+    val nestedLensAnchor = if (nestedControlBackdrop != null) rememberGlassLensRegion(
+        "dialog-controls", appearance.surface, glassBackdrop,
+        freshness = com.tyust.course.ui.system.glass.LocalPageGlassFreshness.current
+    ) { coordinates ->
+        drawBackdropSource(nestedControlBackdrop, dialogDensity, coordinates)
+    } else null
 
     // 320dp 是设计宽度；窄屏上按屏宽收，两侧至少留 20dp，不顶满边缘。
     val screen = rememberScreenMetrics()
@@ -1161,6 +1181,7 @@ private fun SystemDialogContent(
     Box(
         modifier = Modifier
             .width(dialogWidth)
+            .glassLensAnchor(nestedLensAnchor)
             .wallpaperRegion(regionState)
     ) {
         if (glassBackdrop != null) {
@@ -1242,7 +1263,8 @@ private fun SystemDialogContent(
             )
         }
 
-        CompositionLocalProvider(LocalControlBackdrop provides nestedControlBackdrop) {
+        CompositionLocalProvider(LocalControlBackdrop provides nestedControlBackdrop, LocalGlassLensAnchor provides nestedLensAnchor,
+            LocalThemedContent provides true, LocalGlassAppearanceOverride provides appearance) {
         ProvideWallpaperAppearance(appearance) {
             Column(
                 modifier = Modifier.padding(

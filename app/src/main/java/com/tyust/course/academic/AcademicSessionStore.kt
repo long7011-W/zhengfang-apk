@@ -49,6 +49,7 @@ class AcademicSession internal constructor(
     private val operationMutex = Mutex()
     private val requestMutex = Mutex()
     private val pluginAuthCookies = mutableMapOf<String, AcademicCookieJar>()
+    internal var pluginToken: com.tyust.course.academic.plugin.PluginAcademicToken? = null
     private var lastRequestStarted: Long? = null
     @Volatile var retired: Boolean = false
         private set
@@ -59,6 +60,7 @@ class AcademicSession internal constructor(
         synchronized(this) {
             epoch = epochCounter.incrementAndGet()
             cookies.clear()
+            pluginToken = null
             pluginAuthCookies.values.forEach { it.retire() }
             pluginAuthCookies.clear()
         }
