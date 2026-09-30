@@ -52,7 +52,7 @@ import org.json.JSONObject
         if (web !== view || !active() || problem.isNotBlank() || !gate.owns(url) || view.url != url) return
         revoke()
         val instance = gate.bind(url)
-        host = NativeCapabilityHost(app, pkg, session, interaction) { active() && gate.current(instance) }
+        host = NativeCapabilityHost(app, pkg, session, interaction, disclosureOrigin = origin) { active() && gate.current(instance) }
         val pageInfo = JSONObject().put("pageId", page.id).put("templateId", page.templateId).put("params", page.params)
         val js = """(function(){const instance=${JSONObject.quote(instance)};let n=0;const pending=new Map();zfBridge.onmessage=e=>{const r=JSON.parse(e.data);if(r.instance!==instance)return;const p=pending.get(r.id);if(p){pending.delete(r.id);r.ok?p.resolve(r.data):p.reject(r.error)}};window.zf={page:Object.freeze($pageInfo),call:(capability,input={},version=1)=>new Promise((resolve,reject)=>{const id='web_'+instance+'_'+(++n);pending.set(id,{resolve,reject});zfBridge.postMessage(JSON.stringify({id,instance,capability,version,input}));setTimeout(()=>{if(pending.delete(id))reject({code:'TIMEOUT',message:'宿主调用超时'})},120000)})};window.dispatchEvent(new Event('zf-ready'));})();"""
         view.evaluateJavascript(js, null)

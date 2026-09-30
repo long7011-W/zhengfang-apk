@@ -172,6 +172,9 @@ class GlassLensAnchor internal constructor(
         androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation { overlayVersion++ }
     }
 
+    /** Live replay also needs invalidation after a frozen glyph picture is replaced. */
+    internal fun liveSourceRevision(): Long = (version.toLong() shl 32) or (overlayVersion.toLong() and 0xffffffffL)
+
     private var warnedUnanchored = false
 
     /** 连续多少次 draw 仍然没有 coordinates。挂上即清零。 */
@@ -243,6 +246,7 @@ class GlassLensAnchor internal constructor(
             val overlayChanged = overlay != null &&
                 (geometryChanged || uploadedOverlayVersion != overlayVersion || recordedOverlay == null)
             try {
+                val recordStarted = System.nanoTime()
                 val background = if (backgroundChanged) {
                     backgroundCaptureCount++
                     recordGlassLensSource("$tag-background", size, density, coords.size) { drawSource(coords) }
@@ -266,6 +270,7 @@ class GlassLensAnchor internal constructor(
                     recordedBackground?.let { drawContext.canvas.nativeCanvas.drawRenderNode(it) }
                     if (overlay != null) recordedOverlay?.let { drawContext.canvas.nativeCanvas.drawRenderNode(it) }
                 }
+                GlassLensCaptureObserver.onTiming?.invoke(tag, "record", System.nanoTime() - recordStarted)
                 val generation = ++uploadSequence
                 val queuedAt = System.nanoTime()
                 val recording = GlassLensCaptureFrame(generation, geometry, combined, queuedAt)
@@ -313,7 +318,7 @@ class GlassLensAnchor internal constructor(
                                 source.uploadSource(bitmap, generation) {
                                     GlassLensCaptureObserver.onTiming?.invoke(tag, "capture-to-upload", System.nanoTime() - queuedAt)
                                     mainHandler.post {
-                                        if (!disposed) sourceFrame = recording
+                                        if (!disposed && (sourceFrame?.generation ?: -1) < recording.generation) sourceFrame = recording
                                     }
                                 }
                             }
@@ -703,6 +708,14 @@ private class GlassLensNode(
      */
     private var target = GlassLensTarget(anchor.source, anchor.tag)
     private var targetReleased = false
+    // Movable content detaches while crossing into/out of a same-window portal.
+    // Releasing immediately discards the completed optical frame for one draw.
+    private val releaseDetachedTarget = Runnable {
+        if (!isAttached) {
+            target.release()
+            targetReleased = true
+        }
+    }
 
     var anchor: GlassLensAnchor = anchor
         set(value) {
@@ -717,6 +730,7 @@ private class GlassLensNode(
         }
 
     override fun onAttach() {
+        mainHandler.removeCallbacks(releaseDetachedTarget)
         if (targetReleased) {
             target = GlassLensTarget(anchor.source, anchor.tag)
             targetReleased = false
@@ -734,9 +748,10 @@ private class GlassLensNode(
 
     override fun onDetach() {
         target.onFrameReady = null
-        target.release()
-        targetReleased = true
         mainHandler.removeCallbacksAndMessages(null)
+        // Reparenting finishes in this UI traversal. Actual disposal still
+        // releases the GPU target at the next main-loop turn.
+        mainHandler.post(releaseDetachedTarget)
     }
 
     private var coordinates: LayoutCoordinates? = null
@@ -796,6 +811,7 @@ private class GlassLensNode(
         // At zero refraction the GPU can replay the live source directly. Sending
         // animated glyphs through readback here freezes them when the slider stops.
         val useLiveSource = optics.lensAmountPx <= 0f
+        if (useLiveSource) anchor.liveSourceRevision()
         if (!useLiveSource) anchor.ensureSource() ?: return
         // Keep animating against the uploaded source while a newer capture is pending.
         // Publishing its coordinates before its pixels arrive stalls the optical motion.

@@ -614,6 +614,40 @@
     }
   },
   {
+    "name": "privacy.status",
+    "version": 1,
+    "permission": "academic.read",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {},
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    }
+  },
+  {
+    "name": "privacy.revoke",
+    "version": 1,
+    "permission": "academic.read",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {},
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    }
+  },
+  {
     "name": "academic.session.authorize",
     "version": 1,
     "permission": "academic.session",
@@ -655,7 +689,7 @@
   },
   {
     "name": "academic.session.request",
-    "version": 1,
+    "version": 3,
     "permission": "academic.session",
     "input": {
       "type": "object",

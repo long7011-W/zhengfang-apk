@@ -1,5 +1,7 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.system.WallpaperCaption
+
 import com.tyust.course.ui.theme.moduleEntrance
 
 import androidx.compose.foundation.background
@@ -355,10 +357,9 @@ fun SettingsScreen(
                 )
             }
 
-            Text(
+            WallpaperCaption(
                 text = "教务助手 · $currentVersion",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.CenterHorizontally)
             )
         }

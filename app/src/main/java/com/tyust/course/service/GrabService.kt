@@ -567,12 +567,27 @@ class GrabService : Service() {
             stopSelf()
             return
         }
+        val capabilities = com.tyust.course.academic.GrabCapabilities.forSchool(school, account)
+        capabilities.validate(items)?.let { reason ->
+            startForeground(NOTIFICATION_ID, createNotification(reason))
+            broadcastLog(reason)
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        // Pin the selected provider before dispatching any course; an update cannot change
+        // the implementation halfway through this queue.
+        val pinnedAdapter = try { AcademicGatewayFactory.create(school, account) } catch (e: Exception) {
+            val reason = e.message ?: "教务适配暂不可用，请检查插件后重试"
+            startForeground(NOTIFICATION_ID, createNotification(reason))
+            broadcastLog(reason); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+            return
+        }
         val policy = GrabRunPolicy(
             intervalMillis = intent.getIntExtra(EXTRA_INTERVAL, 1500).coerceAtLeast(500).toLong(),
             maxAttempts = intent.getIntExtra(EXTRA_MAX_RETRY, 100).coerceIn(1, 1000)
         )
-        val system = AcademicSystem.fromId(school.academicSystem)
-        val workers = if (system?.serial == false && intent.getBooleanExtra(EXTRA_PARALLEL_MODE, false)) 2 else 1
+        val workers = capabilities.workers(intent.getBooleanExtra(EXTRA_PARALLEL_MODE, false))
         val currentUser = UserManager.getInstance()
         val queueSession = java.util.concurrent.atomic.AtomicReference(currentUser.sessionState.token)
         if (queueSession.get().accountStorageKey != account) return
@@ -580,16 +595,15 @@ class GrabService : Service() {
         store.resetStatuses(account, items)
         successCount = 0; failCount = 0; retryCount = 0
         startForeground(NOTIFICATION_ID, createNotification("教务抢课：${items.size} 门课程"))
-        broadcastLog("开始全队列轮询：${items.size} 门课程，最多同时处理 $workers 门")
+        broadcastLog("开始按顺序执行：${items.size} 门课程，最多同时处理 $workers 门")
         academicJob = academicScope.launch {
-            val semaphore = Semaphore(workers)
             val queueHalted = java.util.concurrent.atomic.AtomicBoolean(false)
             try {
-                coroutineScope {
-                    items.map { item -> launch {
+                com.tyust.course.academic.runOrderedGrabQueue(items, workers,
+                    canContinue = { !queueHalted.get() && currentUser.sessionState.isCurrent(queueSession.get()) }) { item ->
                             var expected = queueSession.get()
-                            if (queueHalted.get() || !currentUser.sessionState.isCurrent(expected)) return@launch
-                            val adapter = AcademicGatewayFactory.create(school, account)
+                            if (queueHalted.get() || !currentUser.sessionState.isCurrent(expected)) return@runOrderedGrabQueue
+                            val adapter = if (pinnedAdapter is com.tyust.course.academic.plugin.PluginAcademicAdapter) pinnedAdapter else AcademicGatewayFactory.create(school, account)
                             lateinit var runner: ProtocolGrabRunner
                             runner = ProtocolGrabRunner(adapter, canContinue = { !queueHalted.get() && currentUser.sessionState.isCurrent(expected) }) {
                                 val active = UserManager.getInstance()
@@ -610,7 +624,7 @@ class GrabService : Service() {
                                 }
                             }
                             runner.runUntilDone(item, policy, withAttempt = { attempt ->
-                                semaphore.withPermit {
+                                run {
                                     expected = queueSession.get()
                                     if (queueHalted.get() || !currentUser.sessionState.isCurrent(expected))
                                         throw CancellationException("Queue requires attention")
@@ -620,7 +634,9 @@ class GrabService : Service() {
                             }) { event ->
                                 val eventSession = expected
                                 if (event is GrabRunEvent.Attempt && queueHalted.get()) throw CancellationException("Queue requires attention")
-                                if (event is GrabRunEvent.Paused && event.status.blocksFurtherSelections()) queueHalted.set(true)
+                                if (event is GrabRunEvent.Paused) queueHalted.set(true)
+                                if (event is GrabRunEvent.Paused && event.submissionUnsupported)
+                                    com.tyust.course.academic.GrabCapabilityFailures.record(account, capabilities.providerKey, event.message)
                                 handler.post {
                                     if (!currentUser.sessionState.isCurrent(eventSession)) return@post
                                     when (event) {
@@ -644,7 +660,6 @@ class GrabService : Service() {
                                     }
                                 }
                             }
-                    } }.joinAll()
                 }
                 handler.post {
                     if (!currentUser.sessionState.isCurrent(queueSession.get())) return@post

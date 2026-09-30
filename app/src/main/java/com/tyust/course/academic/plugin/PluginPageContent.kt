@@ -31,7 +31,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
-private data class PagePrompt(val title: String, val message: String, val challenge: JSONObject?, val result: CompletableDeferred<JSONObject?>, val choices: List<Pair<String, String>> = emptyList(), val image: File? = null)
+private data class PagePrompt(val title: String, val message: String, val challenge: JSONObject?, val result: CompletableDeferred<JSONObject?>, val choices: List<Pair<String, String>> = emptyList(), val image: File? = null, val directChoices: Boolean = false)
 
 /** Shared by a pinned main page and the standalone plugin page activity. */
 @Composable fun PluginPageContent(route: String, onNavigate: (String, JSONObject) -> Unit, onBack: () -> Unit, commandId: String? = null, pluginId: String? = null, params: JSONObject = JSONObject()) {
@@ -65,7 +65,7 @@ private data class PagePrompt(val title: String, val message: String, val challe
             accounts.current(pkg, session) && AcademicProviderRegistry.isCurrentPackage(pkg.manifest.id, pkg.digest) && AcademicProviderRegistry.isEnabled(pkg.manifest.id) &&
             (commandId != null || PluginPages.registry.page(route) != null) && (serverId == null || accounts.selected(pkg.manifest.id, serverId) == serviceAccount) } }
         val interaction = rememberPageInteraction(pkg.manifest.name, onNavigate, onBack)
-        val host = remember { NativeCapabilityHost(context, pkg, session, interaction, active) }
+        val host = remember { NativeCapabilityHost(context, pkg, session, interaction, active = active) }
         DisposableEffect(host) { onDispose { host.close(); live.set(false); session.retire() } }
         if (page?.renderer == "web") {
             PluginWebPage(pkg, page.copy(params = pageParams), session, interaction, active)
@@ -106,6 +106,10 @@ private data class PagePrompt(val title: String, val message: String, val challe
     val back by rememberUpdatedState(onBack)
     val interaction = remember {
         object : NativePluginInteraction {
+            override suspend fun consent(title: String, message: String): String? = gate.withLock {
+                val p = PagePrompt(title, message, null, CompletableDeferred(), NativePluginInteraction.CONSENT_CHOICES, directChoices = true); prompt = p
+                try { p.result.await()?.optString("choice") } finally { if (prompt === p) prompt = null }
+            }
             override suspend fun choose(title: String, choices: List<Pair<String, String>>): String? = gate.withLock {
                 val p = PagePrompt(title, "请选择此功能使用的服务。", null, CompletableDeferred(), choices); prompt = p
                 try { p.result.await()?.optString("choice") } finally { if (prompt === p) prompt = null }
@@ -141,12 +145,18 @@ private data class PagePrompt(val title: String, val message: String, val challe
         var save by remember(p) { mutableStateOf(false) }
         val valid = (p.choices.isEmpty() || choice != null) && fields.all { !it.optBoolean("required", true) || !values[it.getString("id")].isNullOrBlank() }
         SystemDialog(onDismissRequest = { p.result.complete(null) }, title = { Text(p.title) },
-            confirmButton = { TextButton(enabled = valid, onClick = { p.result.complete(if (p.choices.isNotEmpty()) JSONObject().put("choice", choice) else if (p.challenge == null) JSONObject() else JSONObject().put("values", JSONObject(values.toMap())).put("remember", save)) }) { Text("确认") } },
-            dismissButton = { TextButton(onClick = { p.result.complete(null) }) { Text("取消") } }) {
+            confirmButton = {
+                if (p.directChoices) Row {
+                    p.choices.filter { it.first != "deny" }.reversed().forEach { (id, label) ->
+                        TextButton(onClick = { p.result.complete(JSONObject().put("choice", id)) }) { Text(label) }
+                    }
+                } else TextButton(enabled = valid, onClick = { p.result.complete(if (p.choices.isNotEmpty()) JSONObject().put("choice", choice) else if (p.challenge == null) JSONObject() else JSONObject().put("values", JSONObject(values.toMap())).put("remember", save)) }) { Text("确认") }
+            },
+            dismissButton = { TextButton(onClick = { p.result.complete(null) }) { Text(if (p.directChoices) "拒绝" else "取消") } }) {
             Column(Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(p.message)
                 p.image?.let { coil.compose.AsyncImage(it, "认证图片", Modifier.fillMaxWidth().heightIn(max = 160.dp)) }
-                p.choices.forEach { (id, label) -> Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                if (!p.directChoices) p.choices.forEach { (id, label) -> Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                     RadioButton(selected = choice == id, onClick = { choice = id }); TextButton(onClick = { choice = id }) { Text(label) }
                 } }
                 fields.forEach { field -> val id = field.getString("id")

@@ -403,7 +403,7 @@ class LoginActivity : ComponentActivity() {
             val username = pendingPasswordUsername.ifBlank {
                 runCatching { android.net.Uri.parse(academicWebPageUrl).getQueryParameter("xh") }.getOrNull().orEmpty()
             }
-            val pluginAuth = com.tyust.course.academic.plugin.AcademicProviderRegistry.overrides(currentSchool, "auth.start")
+            val pluginAuth = academicGateway?.completedPlugin != null
             val key = if (pluginAuth && pendingPasswordLogin) AcademicGatewayFactory.accountKey(currentSchool, username) else validationKey
             validationJob = lifecycleScope.launch {
                 val result = runCatching { withContext(Dispatchers.IO) {

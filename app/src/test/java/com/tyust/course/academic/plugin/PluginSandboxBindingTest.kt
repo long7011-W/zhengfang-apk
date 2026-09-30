@@ -39,11 +39,66 @@ class PluginSandboxBindingTest {
     private suspend fun invoke(context: Context, op: PluginOperation, timeout: Long = 100) =
         PluginSandboxClient(context, timeout).execute("", JSONObject(), op, PluginHost(op, app.cacheDir))
 
-    @Test fun privateServiceKeepsSeparateProcessWithoutAnIsolatedUid() {
+    private fun replyingContext(response: JSONObject) = BindingContext(app) { connection ->
+        connection.onServiceConnected(ComponentName(app, PluginSandboxService::class.java), object : IPluginSandbox.Stub() {
+            override fun execute(input: ParcelFileDescriptor, host: IPluginHost, callback: IPluginResult) {
+                // Robolectric backs pipes with files: EOF can precede the async writer.
+                // Wait for the complete JSON request without changing production transport.
+                val request = ParcelFileDescriptor.AutoCloseInputStream(input).use { stream ->
+                    val bytes = java.io.ByteArrayOutputStream()
+                    val buffer = ByteArray(8192)
+                    val deadline = System.nanoTime() + 2_000_000_000L
+                    var parsed: JSONObject? = null
+                    while (parsed == null && System.nanoTime() < deadline) {
+                        val count = stream.read(buffer)
+                        if (count > 0) {
+                            bytes.write(buffer, 0, count)
+                            parsed = runCatching { JSONObject(bytes.toString("UTF-8")) }.getOrNull()
+                        } else Thread.sleep(1)
+                    }
+                    checkNotNull(parsed) { "Sandbox fixture did not receive the request" }
+                }
+                val file = java.io.File.createTempFile("sandbox-response-", ".json", app.cacheDir)
+                try {
+                    file.writeText(response.toString())
+                    callback.complete(request.getJSONObject("context").getString("operationId"),
+                        ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY))
+                } finally { file.delete() }
+            }
+            override fun cancel(operationId: String) {}
+        })
+        true
+    }
+
+    @Test fun successfulSandboxReturnLeavesCallerOperationActiveUntilCallerClosesIt() = runBlocking {
+        val context = replyingContext(PluginJson.success(JSONObject().put("items", org.json.JSONArray())))
+        val op = operation()
+        try {
+            assertTrue(invoke(context, op, 1000).getBoolean("ok"))
+            op.requireActive()
+            assertEquals(1, context.unbound)
+        } finally { op.close() }
+        assertEquals(PluginErrorCode.CANCELLED, assertThrows(PluginException::class.java) { op.requireActive() }.code)
+    }
+
+    @Test fun minimalNativePageAndButtonResultSurviveTheSandboxReturn() = runBlocking {
+        val pkg = PluginPackage(PluginManifest(JSONObject("""{"id":"native.smoke","name":"Smoke","version":"1.0.0","apiVersion":3,"kind":"native","capabilities":["ui.init","ui.reduce"],"permissions":[],"network":[],"contributes":{"pages":[{"id":"main","title":"Smoke"}],"entries":[]}}""")), "", "fixture", false)
+        val session = AcademicSessionStore().session("plugin:native.smoke", "default", "https://invalid.example/")
+        for ((method, count) in listOf("ui.init" to 0, "ui.reduce" to 1)) {
+            val response = JSONObject("""{"state":{"n":$count},"view":{"id":"counter","type":"text","text":"Count: $count"},"effects":[]}""")
+            val context = replyingContext(PluginJson.success(response))
+            val result = NativePluginRunner.invoke(context, pkg, session, method, JSONObject().put("pageId", "main"), JSONObject(), active = { true })
+            assertEquals(count, result.getJSONObject("state").getInt("n"))
+            assertEquals(1, context.unbound)
+        }
+        session.retire()
+    }
+
+    @Test fun privateServiceUsesAnIsolatedUidAndIsNotExported() {
         val info = app.packageManager.getServiceInfo(ComponentName(app, PluginSandboxService::class.java), 0)
         assertEquals(app.packageName + ":academic_plugin", info.processName)
         assertFalse(info.exported)
-        assertEquals(0, info.flags and ServiceInfo.FLAG_ISOLATED_PROCESS)
+        assertEquals(ServiceInfo.FLAG_ISOLATED_PROCESS, info.flags and ServiceInfo.FLAG_ISOLATED_PROCESS)
     }
     @Test fun failedBindDoesNotExecuteOrUnbindANonexistentConnection() = runTest {
         val context = BindingContext(app) { false }
@@ -81,7 +136,7 @@ class PluginSandboxBindingTest {
     @Test fun cancellationWhileConnectingClosesTheOperation() = runTest {
         val context = BindingContext(app) { true }
         val op = operation()
-        val task = launch { invoke(context, op) }
+        val task = launch { try { invoke(context, op) } finally { op.close() } }
         runCurrent()
         task.cancelAndJoin()
         assertEquals(1, context.unbound)

@@ -31,6 +31,7 @@ class TyustSsoLoginManagerTest {
 
     @Test
     fun postsEncryptedBrowserFormAndReturnsOnlyTeachingCookies() {
+        enqueueTeachingEntry()
         enqueueSuccessfulLoginChain()
         val callback = RecordingCallback()
         val manager = TyustSsoLoginManager(testEndpoints())
@@ -42,6 +43,9 @@ class TyustSsoLoginManagerTest {
         assertEquals("JSESSIONID=jw; route=node-a", callback.cookie)
         assertFalse(callback.cookie.orEmpty().contains("SESSION=sso"))
 
+        val teachingEntry = server.takeRequest(1, TimeUnit.SECONDS)
+        assertEquals("/sso/jasiglogin/jwglxt", teachingEntry?.requestUrl?.encodedPath)
+        assertNull(teachingEntry?.requestUrl?.queryParameter("ticket"))
         val loginPageRequest = server.takeRequest(1, TimeUnit.SECONDS)
         assertEquals("GET", loginPageRequest?.method)
         assertEquals(testEndpoints().teachingService.toString(), loginPageRequest?.requestUrl?.queryParameter("service"))
@@ -78,10 +82,13 @@ class TyustSsoLoginManagerTest {
         assertEquals("flow-123", fields["execution"])
         assertEquals("", fields["captcha_code"])
         assertFalse(postBody.contains("protocol-test"))
+        val ticketCallback = server.takeRequest(1, TimeUnit.SECONDS)
+        assertTrue(ticketCallback?.getHeader("Cookie").orEmpty().contains("route=bootstrap"))
     }
 
     @Test
     fun followsTheBoundedCasRedirectChainToAuthenticatedIndex() {
+        enqueueTeachingEntry()
         enqueueSuccessfulLoginChain()
         val callback = RecordingCallback()
 
@@ -94,12 +101,13 @@ class TyustSsoLoginManagerTest {
 
         assertTrue("login callback timed out", callback.await())
         assertEquals("JSESSIONID=jw; route=node-a", callback.cookie)
-        assertEquals(7, server.requestCount)
+        assertEquals(8, server.requestCount)
         val paths = buildList {
-            repeat(7) { add(server.takeRequest().requestUrl!!.encodedPath) }
+            repeat(8) { add(server.takeRequest().requestUrl!!.encodedPath) }
         }
         assertEquals(
             listOf(
+                "/sso/jasiglogin/jwglxt",
                 "/login",
                 "/login",
                 "/sso/jasiglogin/jwglxt",
@@ -114,6 +122,7 @@ class TyustSsoLoginManagerTest {
 
     @Test
     fun resubmitsOnceWhenFirstPostRefreshesTheLoginForm() {
+        enqueueTeachingEntry()
         server.enqueue(MockResponse().setResponseCode(200).setBody(loginPageHtml()))
         server.enqueue(
             MockResponse().setResponseCode(200)
@@ -129,8 +138,9 @@ class TyustSsoLoginManagerTest {
         assertTrue("login callback timed out", callback.await())
         assertNull(callback.error)
         assertEquals("JSESSIONID=jw; route=node-a", callback.cookie)
-        assertEquals(8, server.requestCount)
+        assertEquals(9, server.requestCount)
 
+        server.takeRequest()
         val loginGet = server.takeRequest()
         val firstPost = server.takeRequest()
         val refreshedPost = server.takeRequest()
@@ -147,6 +157,7 @@ class TyustSsoLoginManagerTest {
 
     @Test
     fun stopsAfterOneRefreshedFormResubmission() {
+        enqueueTeachingEntry()
         server.enqueue(MockResponse().setResponseCode(200).setBody(loginPageHtml()))
         server.enqueue(
             MockResponse().setResponseCode(200)
@@ -165,11 +176,12 @@ class TyustSsoLoginManagerTest {
         assertTrue("login callback timed out", callback.await())
         assertNull(callback.cookie)
         assertEquals("统一认证登录失败，请检查账号密码或稍后重试", callback.error)
-        assertEquals(3, server.requestCount)
+        assertEquals(4, server.requestCount)
     }
 
     @Test
     fun mapsChineseCredentialErrorToInvalidCredentials() {
+        enqueueTeachingEntry()
         server.enqueue(MockResponse().setResponseCode(200).setBody(loginPageHtml()))
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
@@ -190,6 +202,7 @@ class TyustSsoLoginManagerTest {
 
     @Test
     fun mapsUnauthorizedLoginPageToInvalidCredentials() {
+        enqueueTeachingEntry()
         // The 2026-08 SSO returns 401 with a fresh login page (no error text)
         // when the submitted credentials are rejected.
         server.enqueue(MockResponse().setResponseCode(200).setBody(loginPageHtml()))
@@ -207,11 +220,12 @@ class TyustSsoLoginManagerTest {
         assertTrue(callback.invalidCredentials)
         assertNull(callback.error)
         assertNull(callback.cookie)
-        assertEquals(2, server.requestCount)
+        assertEquals(3, server.requestCount)
     }
 
     @Test
     fun fetchesCaptchaWhenPostResponseIntroducesChallenge() {
+        enqueueTeachingEntry()
         server.enqueue(MockResponse().setResponseCode(200).setBody(loginPageHtml()))
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(
@@ -233,11 +247,13 @@ class TyustSsoLoginManagerTest {
         assertNull(callback.error)
         server.takeRequest()
         server.takeRequest()
+        server.takeRequest()
         assertEquals("/captcha", server.takeRequest().requestUrl!!.encodedPath)
     }
 
     @Test
     fun submitsCaptchaOnceAndMapsCaptchaError() {
+        enqueueTeachingEntry()
         server.enqueue(
             MockResponse().setResponseCode(200)
                 .setBody(loginPageHtml(captchaInvisible = false))
@@ -260,6 +276,7 @@ class TyustSsoLoginManagerTest {
         assertTrue(submitCallback.captchaInvalid.await(5, TimeUnit.SECONDS))
         assertEquals(1L, initialCallback.captchaInvalid.count)
 
+        server.takeRequest()
         val loginGet = server.takeRequest()
         val captchaGet = server.takeRequest()
         val captchaPost = server.takeRequest()
@@ -267,7 +284,70 @@ class TyustSsoLoginManagerTest {
         assertEquals("/captcha", captchaGet.requestUrl!!.encodedPath)
         assertEquals("POST", captchaPost.method)
         assertEquals("A7B9", decodeForm(captchaPost.body.readUtf8())["captcha_code"])
+        assertEquals(4, server.requestCount)
+    }
+
+    @Test
+    fun teachingEntryFailureDoesNotSubmitCredentials() {
+        server.enqueue(MockResponse().setResponseCode(503))
+        val callback = RecordingCallback()
+        TyustSsoLoginManager(testEndpoints()).login(tyustSchool(), "student-001", "protocol-test", callback)
+        assertTrue(callback.await())
+        assertEquals("教务登录入口返回错误 (503)，请稍后重试", callback.error)
+        assertEquals(1, server.requestCount)
+        assertEquals("GET", server.takeRequest().method)
+        assertNull(callback.cookie)
+    }
+
+    @Test
+    fun ticketCallbackFailureIsNotReportedAsBadCredentialsOrSuccess() {
+        enqueueTeachingEntry()
+        server.enqueue(MockResponse().setBody(loginPageHtml()))
+        server.enqueue(MockResponse().setResponseCode(302)
+            .addHeader("Location", "/sso/jasiglogin/jwglxt?ticket=synthetic-ticket"))
+        server.enqueue(MockResponse().setResponseCode(404).setBody("Not Found"))
+        val callback = RecordingCallback()
+        TyustSsoLoginManager(testEndpoints()).login(tyustSchool(), "student-001", "protocol-test", callback)
+        assertTrue(callback.await())
+        assertEquals("统一认证已完成，但教务系统返回错误 (404)，请稍后重试", callback.error)
+        assertFalse(callback.invalidCredentials)
+        assertNull(callback.cookie)
+        assertEquals(4, server.requestCount)
+    }
+
+    private fun enqueueTeachingEntry() {
+        server.enqueue(MockResponse().setResponseCode(302)
+            .addHeader("Location", "/login")
+            .addHeader("Set-Cookie", "route=bootstrap; Path=/; HttpOnly"))
+    }
+
+    @Test
+    fun missingTeachingBackendRetriesBeforeLoginAndDropsItsStickyRoute() {
+        server.enqueue(MockResponse().setResponseCode(404).addHeader("Set-Cookie", "route=missing; Path=/"))
+        enqueueTeachingEntry()
+        enqueueSuccessfulLoginChain()
+        val callback = RecordingCallback()
+        TyustSsoLoginManager(testEndpoints()).login(tyustSchool(), "student-001", "protocol-test", callback)
+        assertTrue(callback.await())
+        assertNull(callback.error)
+        assertEquals("JSESSIONID=jw; route=node-a", callback.cookie)
+        server.takeRequest()
+        val retried = server.takeRequest()
+        assertEquals("GET", retried.method)
+        assertFalse(retried.getHeader("Cookie").orEmpty().contains("route=missing"))
+        assertEquals(9, server.requestCount)
+    }
+
+    @Test
+    fun persistentTeachingEntry404StopsWithoutEverSubmittingCredentials() {
+        repeat(3) { server.enqueue(MockResponse().setResponseCode(404)) }
+        val callback = RecordingCallback()
+        TyustSsoLoginManager(testEndpoints()).login(tyustSchool(), "student-001", "protocol-test", callback)
+        assertTrue(callback.await())
+        assertEquals("教务登录入口返回错误 (404)，请稍后重试", callback.error)
         assertEquals(3, server.requestCount)
+        repeat(3) { assertEquals("GET", server.takeRequest().method) }
+        assertNull(callback.cookie)
     }
 
     private fun enqueueSuccessfulLoginChain() {

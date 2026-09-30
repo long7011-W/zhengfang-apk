@@ -1,6 +1,7 @@
 package com.tyust.course.ui.system.glass
 
 import androidx.compose.foundation.background
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -15,6 +16,7 @@ import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
@@ -58,10 +60,12 @@ fun Modifier.liquidChip(
     elevation: Dp = 0.dp,
     interactive: Boolean = true,
     appearance: GlassChipAppearance = GlassChipAppearance.Default,
-    opticalFeedback: Boolean = interactive
+    opticalFeedback: Boolean = interactive,
+    /** 盘面明暗。默认跟主题；壁纸上的图标钮按字形取反，见 [chipUsesLightSurface]。 */
+    lightSurface: Boolean = !rememberGlassDarkTheme()
 ): Modifier {
     val toolbar = com.tyust.course.ui.system.LocalTopBarMotion.current
-    val isLight = !rememberGlassDarkTheme()
+    val isLight = lightSurface
     val accessibility = rememberGlassAccessibilityMode()
     val hasRealLens = isRuntimeLensEnabled()
     // API31/32 的离屏折射锚点，由某个**不动的祖先**通过 CompositionLocal 下发
@@ -234,9 +238,10 @@ fun Modifier.glassChip(
     elevation: Dp = 0.dp,
     rimIntensity: Float = 1f,
     dimmed: Boolean = false,
-    pressProgress: () -> Float = { 0f }
+    pressProgress: () -> Float = { 0f },
+    lightSurface: Boolean = !rememberGlassDarkTheme()
 ): Modifier {
-    val isLight = !rememberGlassDarkTheme()
+    val isLight = lightSurface
     val strength = if (dimmed) GlassRecipe.ChipDisabledSurfaceScale else 1f
     val rim = rimIntensity * if (dimmed) GlassRecipe.ChipDisabledRimScale else 1f
     // 浅色主题彻底不投影。参考图那枚返回键是没有阴影的，
@@ -385,10 +390,13 @@ fun Modifier.adaptiveGlassChip(
     optics: InteractiveOptics,
     enabled: Boolean = true,
     elevation: Dp = 0.dp,
-    interactive: Boolean = true
+    interactive: Boolean = true,
+    /** 芯片上图标的颜色。盘面明暗由它决定，而不是由主题决定。 */
+    glyphColor: Color = LocalContentColor.current
 ): Modifier {
     val toolbar = com.tyust.course.ui.system.LocalTopBarMotion.current
     val usable = backdrop?.takeIf { isBackdropSupported() }
+    val lightSurface = chipUsesLightSurface(glyphColor)
     if (usable != null) {
         return liquidChip(
             backdrop = usable,
@@ -396,7 +404,8 @@ fun Modifier.adaptiveGlassChip(
             optics = optics,
             enabled = enabled,
             elevation = elevation,
-            interactive = interactive
+            interactive = interactive,
+            lightSurface = lightSurface
         )
     }
 
@@ -421,7 +430,18 @@ fun Modifier.adaptiveGlassChip(
             shape = shape,
             elevation = elevation,
             dimmed = !enabled,
-            pressProgress = { optics.pressProgress }
+            pressProgress = { optics.pressProgress },
+            lightSurface = lightSurface
         )
         .then(if (allowInteraction) optics.gestureModifier else Modifier)
 }
+
+/**
+ * 芯片盘面的明暗取字形的反面，而不是直接跟主题。
+ *
+ * 壁纸页上的图标颜色由壁纸决定：深色主题配浅色壁纸时图标是深色的，盘面若仍按主题
+ * 画成 0.84 的深色，就是一枚黑盘压着黑图标。图标本来就跟主题时（卡片、弹窗、主色图标），
+ * 这里给出的结果与主题相同。0.2 约是白色与深色盘面对比度相等的亮度分界，
+ * 所以深色主题的主色（亮度约 0.5）仍落在深色盘面上。
+ */
+internal fun chipUsesLightSurface(glyph: Color): Boolean = glyph.luminance() < 0.2f

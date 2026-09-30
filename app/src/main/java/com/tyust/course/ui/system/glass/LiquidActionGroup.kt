@@ -53,7 +53,6 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.kyant.backdrop.Backdrop
-import com.tyust.course.ui.system.rememberGlassDarkTheme
 import com.tyust.course.ui.system.GlassRecipe
 import com.tyust.course.ui.system.LocalControlBackdrop
 import com.tyust.course.ui.system.rememberGlassAccessibilityMode
@@ -104,7 +103,8 @@ fun LiquidActionGroup(
     mergeEnabled: Boolean = true,
     content: @Composable LiquidActionGroupScope.() -> Unit
 ) {
-    val isLight = !rememberGlassDarkTheme()
+    // 与芯片同一判据：图标跟壁纸走时，盘面与桥也跟着走
+    val isLight = chipUsesLightSurface(LocalContentColor.current)
     val accessibility = rememberGlassAccessibilityMode()
     // 几何与可用性分开存：bounds 由 onPlaced 上报，而 enabled 变化时
     // 几何往往没变、onPlaced 不会重跑。塞在同一个结构里会让 enabled 过期，

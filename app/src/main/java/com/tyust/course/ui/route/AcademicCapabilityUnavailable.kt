@@ -8,11 +8,13 @@ import androidx.compose.ui.unit.dp
 import com.tyust.course.ui.system.SystemEmptyState
 import com.tyust.course.ui.system.SystemTopBar
 
-@Composable internal fun AcademicCapabilityUnavailable(title: String, message: String) {
+@Composable internal fun AcademicCapabilityUnavailable(title: String, message: String, onOpenSchool: (() -> Unit)? = null) {
     Column(Modifier.fillMaxSize()) {
         SystemTopBar(title = title)
         Box(Modifier.weight(1f).fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-            SystemEmptyState(title = "尚未适配", message = message)
+            SystemEmptyState(title = "当前功能不可用", message = message) {
+                if (onOpenSchool != null) com.tyust.course.ui.system.SystemSecondaryButton("打开学校网页", onOpenSchool)
+            }
         }
     }
 }

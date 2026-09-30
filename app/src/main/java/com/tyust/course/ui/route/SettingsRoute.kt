@@ -307,11 +307,12 @@ fun SettingsRoute(
                     if (user.sessionState.isCurrent(expected)) {
                         cookieUpdateFeedback = expected to com.tyust.course.ui.system.SymbolResult.Failure
                         GlassToaster.show(
-                        when (result.reason) {
+                        result.message.ifBlank { when (result.reason) {
                             com.tyust.course.utils.RecoveryFailure.Network -> "暂时无法连接，请稍后重试"
+                            com.tyust.course.utils.RecoveryFailure.Login -> "登录处理失败，请重试或使用网页登录"
                             com.tyust.course.utils.RecoveryFailure.Storage -> "保存失败，请重试"
                             else -> "需要重新登录以更新登录状态"
-                        }
+                        } }
                         )
                     }
                 }

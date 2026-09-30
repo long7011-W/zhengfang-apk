@@ -16,6 +16,12 @@ class AcademicGrabScheduler(context: Context) {
     fun canScheduleExactly(): Boolean = Build.VERSION.SDK_INT < 31 || alarms.canScheduleExactAlarms()
 
     fun schedule(account: String, accountStorage: String, triggerAt: Long, policy: GrabRunPolicy, parallel: Boolean) {
+        val school = com.tyust.course.manager.UserManager.getInstance().currentSchool
+            ?: error("请先选择学校")
+        val capabilities = GrabCapabilities.forSchool(school, accountStorage)
+        check(capabilities.scheduling) { capabilities.reason }
+        capabilities.validate(AcademicGrabQueueStore(context).items(accountStorage).filter { it.enabled && it.schoolId == school.id })
+            ?.let { error(it) }
         require(account.isNotBlank() && accountStorage.isNotBlank()) { "请先登录任务账号" }
         require(triggerAt > System.currentTimeMillis()) { "开始时间必须在当前时间之后" }
         require(policy.intervalMillis in 500..Int.MAX_VALUE.toLong() && policy.maxAttempts in 1..1000)
@@ -25,7 +31,7 @@ class AcademicGrabScheduler(context: Context) {
             putExtra(GrabAlarmReceiver.EXTRA_ACCOUNT_STORAGE_KEY, accountStorage)
             putExtra(GrabAlarmReceiver.EXTRA_INTERVAL, policy.intervalMillis.toInt())
             putExtra(GrabAlarmReceiver.EXTRA_MAX_RETRY, policy.maxAttempts)
-            putExtra(GrabAlarmReceiver.EXTRA_PARALLEL_MODE, parallel)
+            putExtra(GrabAlarmReceiver.EXTRA_PARALLEL_MODE, parallel && capabilities.maxConcurrency > 1)
         }
         val pending = PendingIntent.getBroadcast(context, 0, intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

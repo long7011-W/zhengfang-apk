@@ -338,10 +338,15 @@ private fun PickerLensLayer(
     val enabledScale = if (enabled) 1f else GlassRecipe.ChipDisabledSurfaceScale
     val surfaceAlpha = material.surfaceAlpha * enabledScale *
         if (isLightTheme) 1f else 0.72f
-    val surfaceColor = if (popupSurface) LocalWallpaperAppearanceColors.current.surface.copy(
-        alpha = maxOf(LocalWallpaperAppearanceColors.current.surface.alpha,
-            modalSurfaceAlpha(!isLightTheme, accessibility.highContrast))
-    ) else Color.White.copy(alpha = surfaceAlpha)
+    val customWallpaper =
+        com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset
+    val wallpaperSurface = LocalWallpaperAppearanceColors.current.surface
+    val surfaceColor = if (popupSurface) wallpaperSurface.copy(
+        // 菜单行铺在触发器采样范围之外的壁纸上，那里的明暗不受这次色调映射保证。
+        alpha = if (customWallpaper) maxOf(wallpaperSurface.alpha, ReadableAnyBackdropAlpha)
+        else modalSurfaceAlpha(!isLightTheme, accessibility.highContrast)
+    ) else if (customWallpaper) wallpaperSurface
+    else Color.White.copy(alpha = surfaceAlpha)
 
     Box(
         modifier = modifier
@@ -441,7 +446,13 @@ fun LiquidSegmentedControl(
     val useGlass = glassBackdrop != null
     // API 33+ uses a runtime lens; API 31/32 refracts the background asynchronously.
     val hasRealLens = isRuntimeLensEnabled()
-    val isLightTheme = LocalWallpaperAppearanceColors.current.usesDarkForeground
+    // Cards and dialogs keep the theme; a free-standing control follows the wallpaper under it.
+    // Labels, track and indicator must all read the same palette, or one of them inverts.
+    val palette = localReadableAppearance()
+    val isLightTheme = palette.usesDarkForeground
+    val accent = readableAccent(palette)
+    val readableBacking = !LocalThemedContent.current &&
+        com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset
     val trackShape = RoundedCornerShape(percent = 50)
     val indicatorShape = RoundedCornerShape(percent = 50)
     // Animated date labels stay live above the lens. Other controls keep labels
@@ -539,7 +550,7 @@ fun LiquidSegmentedControl(
             }
         }
 
-        val trackBackgroundColor = if (hasRealLens) {
+        val recipeTrackColor = if (hasRealLens) {
             if (isLightTheme) {
                 Color.White.copy(alpha = GlassRecipe.SegTrackSurfaceAlphaLight)
             } else {
@@ -553,7 +564,14 @@ fun LiquidSegmentedControl(
                 Color.Black.copy(alpha = GlassRecipe.NavLegacyTrackSurfaceAlpha)
             }
         }
-        val trackBorderColor = MaterialTheme.colorScheme.onSurface.copy(
+        // A photo can put black and white under the same label; a 10–16 % tint separates
+        // neither from it. Custom wallpapers get at least the tone-mapped backing.
+        val trackBackgroundColor = if (readableBacking) {
+            palette.surface.copy(alpha = maxOf(palette.surface.alpha, recipeTrackColor.alpha))
+        } else {
+            recipeTrackColor
+        }
+        val trackBorderColor = palette.onSurface.copy(
             alpha = when {
                 compact && useGlass -> 0.07f
                 useGlass -> 0.10f
@@ -668,14 +686,10 @@ fun LiquidSegmentedControl(
                 val textColor = if (enabled) {
                     // 分段栏嵌在页面里，只靠字重差提示太弱：选中直接走主色，
                     // 未选中压到低对比，两端拉开后"当前在哪一段"一眼可见。
-                    lerpColor(
-                        MaterialTheme.colorScheme.onSurfaceVariant,
-                        MaterialTheme.colorScheme.primary,
-                        selectionAmount
-                    )
+                    lerpColor(palette.onSurfaceVariant, accent, selectionAmount)
                 } else {
                     // 禁用只降内容对比，轨道与滑块保持实色，避免整块糊成半透明灰
-                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                    palette.onSurface.copy(alpha = 0.38f)
                 }
                 Box(
                     modifier = Modifier
@@ -735,7 +749,7 @@ fun LiquidSegmentedControl(
             scaleX = scale
             scaleY = scale
         }
-        val fallbackIndicatorColor = MaterialTheme.colorScheme.surface
+        val fallbackIndicatorColor = palette.solidSurface
         Box(
             modifier = Modifier
                 .fillMaxSize()
@@ -815,8 +829,7 @@ fun LiquidSegmentedControl(
             if (refractLabels) {
             // 专供滑块折射采样的隐藏层：染成主色后，透镜里浮出的就是饱和蓝字，
             // 滑块表面因此可以做到几乎透明，不必靠白色填充去制造存在感。
-            val labelTint = ColorFilter.tint(if (enabled) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f))
+            val labelTint = ColorFilter.tint(if (enabled) accent else palette.onSurface.copy(alpha = 0.38f))
             Row(
                 modifier = Modifier
                     .clearAndSetSemantics { }
@@ -841,7 +854,7 @@ fun LiquidSegmentedControl(
                             .fillMaxHeight(),
                         contentAlignment = Alignment.Center
                     ) {
-                        if (labelContent != null) labelContent(index, 1f, MaterialTheme.colorScheme.primary)
+                        if (labelContent != null) labelContent(index, 1f, accent)
                         else Text(
                             text = label,
                             modifier = Modifier.padding(
@@ -1006,7 +1019,16 @@ fun LiquidSegmentedControl(
                         // 轨道明显割裂（已在设备上截图确认）。
                         // 已在 API 35 上截库同一个控件对照：它是白色 0.18 的提亮，
                         // 滑块比轨道更亮更粉，而不是更暗。
-                        if (hasRealLens || lensAnchor != null) {
+                        if (readableBacking) {
+                            // The lens shows the wallpaper without the track's backing, so the
+                            // selected label needs the same tone-mapped backing of its own.
+                            val restAlpha = if (isLightTheme) {
+                                GlassRecipe.SegSelectedSurfaceAlphaLight
+                            } else {
+                                GlassRecipe.SegSelectedSurfaceAlphaDark
+                            }
+                            drawRect(palette.surface.copy(alpha = maxOf(palette.surface.alpha, restAlpha)))
+                        } else if (hasRealLens || lensAnchor != null) {
                             val solidColor = if (isLightTheme) {
                                 Color(GlassRecipe.NavSelectedSolidColorLight)
                             } else {
@@ -1405,10 +1427,10 @@ fun LiquidPicker(
         },
         modifier = modifier.fillMaxWidth()
     ) {
+    ProvideWallpaperAppearance(appearance) {
     Box(
         modifier = Modifier.fillMaxWidth()
             .height(resolvedLayoutHeight)
-            .wallpaperRegion(regionState)
     ) {
         // Rounded children use the real lens path (the backdrop library requires a rounded-
         // rectangular shape). While the body is still connected, one generic-outline backdrop
@@ -1508,6 +1530,8 @@ fun LiquidPicker(
                 .offset(y = headerOffset)
                 .fillMaxWidth()
                 .height(headerHeight)
+                // The menu's changing extent must not change the trigger's tone.
+                .wallpaperRegion(regionState)
                 .graphicsLayer {
                     transformOrigin = TransformOrigin(0.5f, 0f)
                     scaleX = headerScale * collisionScaleX
@@ -1716,6 +1740,7 @@ fun LiquidPicker(
 }
 
 }
+}
 
 @Composable
 private fun MorphingPickerRow(
@@ -1730,6 +1755,7 @@ private fun MorphingPickerRow(
     onHighlight: () -> Unit,
     onClick: () -> Unit
 ) {
+    val appearance = LocalWallpaperAppearanceColors.current
     val interactionSource = remember { MutableInteractionSource() }
     val pressed by interactionSource.collectIsPressedAsState()
 
@@ -1770,7 +1796,7 @@ private fun MorphingPickerRow(
             color = if (action) {
                 MaterialTheme.colorScheme.primary
             } else {
-                MaterialTheme.colorScheme.onSurface
+                appearance.onSurface
             },
             maxLines = maxLines,
             overflow = TextOverflow.Ellipsis
@@ -1780,7 +1806,7 @@ private fun MorphingPickerRow(
                 imageVector = Icons.Default.Check,
                 contentDescription = null,
                 modifier = Modifier.size(18.dp),
-                tint = MaterialTheme.colorScheme.onSurface
+                tint = appearance.onSurface
             )
         }
     }

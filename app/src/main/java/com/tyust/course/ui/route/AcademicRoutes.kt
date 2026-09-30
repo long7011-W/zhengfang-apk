@@ -366,14 +366,20 @@ fun AcademicSelectedCoursesRoute(school: SchoolConfig, refreshRevision: Int = 0,
 
 @Composable
 fun AcademicGrabQueueRoute(school: SchoolConfig) {
-    if (!com.tyust.course.academic.plugin.AcademicProviderRegistry.hasCapability(school, "selection.select")) {
-        AcademicCapabilityUnavailable("抢课", "该学校尚未适配选课，暂不能添加抢课任务"); return
-    }
     val context = LocalContext.current
     val account = UserManager.getInstance().currentAccountStorageKey
     val sessions = UserManager.getInstance().sessionState
     val session by sessions.state.collectAsState()
     val expectedSession = session.token
+    val providerRevision by com.tyust.course.academic.plugin.AcademicProviderRegistry.revision.collectAsState()
+    val failureRevision by GrabCapabilityFailures.revision.collectAsState()
+    val capabilities = remember(school, account, session.token, providerRevision, failureRevision) { GrabCapabilities.forSchool(school, account) }
+    if (!capabilities.available) {
+        AcademicCapabilityUnavailable("抢课", capabilities.reason, onOpenSchool = {
+            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(school.fullBasePath)))
+        })
+        return
+    }
     val store = remember(context) { AcademicGrabQueueStore(context) }
     val prefs = remember(context) { context.getSharedPreferences("grab_pro_prefs", Context.MODE_PRIVATE) }
     val scheduler = remember(context) { AcademicGrabScheduler(context) }
@@ -394,20 +400,32 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
     var scheduledInfo by remember(account) { mutableStateOf(prefs.getString("scheduled_task_info_$account", "").orEmpty()) }
     var showDateTimePicker by remember(account) { mutableStateOf(false) }
     var showManualAdd by remember(account) { mutableStateOf(false) }
-    var inputCourse by remember(account) { mutableStateOf("") }
-    var inputSection by remember(account) { mutableStateOf("") }
-    var inputTeacher by remember(account) { mutableStateOf("") }
-    var inputTime by remember(account) { mutableStateOf("") }
     var pendingScheduledStart by remember(account) { mutableStateOf(false) }
     fun replace(updated: List<AcademicGrabItem>) { if (!running) { store.replace(account, updated); items = updated } }
-    fun start(scheduled: Boolean = false) {
+    var pendingTargetStart by remember(account) { mutableStateOf(false) }
+    var fuzzy by remember(account) { mutableStateOf(prefs.getBoolean("queue_fuzzy_$account", false) || items.any { !it.useExactMatch }) }
+    LaunchedEffect(capabilities) {
+        if (capabilities.maxConcurrency == 1) parallel = false
+    }
+    fun changeMatching(value: Boolean) {
+        if (running || hasScheduledTask) return
+        if (!value && items.any { it.stableSectionId.isBlank() }) {
+            GlassToaster.show("手动课程没有真实教学班，请从课程列表选择后再使用精确匹配"); return
+        }
+        fuzzy = value
+        prefs.edit().putBoolean("queue_fuzzy_$account", value).apply()
+        replace(items.map { it.copy(useExactMatch = !value) })
+    }
+    fun start(scheduled: Boolean = false, targetOnly: Boolean = false) {
         if (!sessions.isCurrent(expectedSession) || running) return
         val delay = interval.toIntOrNull()
         val attempts = maxRetry.toIntOrNull()
         if (delay == null || delay < 500 || attempts == null || attempts !in 1..1000) {
             GlassToaster.show("间隔至少为 500 毫秒，尝试次数为 1–1000 次"); return
         }
-        if (items.none { it.enabled } && (scheduled || target == null)) { GlassToaster.show("请先在队列中添加课程"); return }
+        val selectedItems = (if (targetOnly) listOfNotNull(target) else items).filter { it.enabled }
+        if (selectedItems.isEmpty()) { GlassToaster.show("请先在队列中添加课程"); return }
+        GrabCapabilities.forSchool(school, account).validate(selectedItems)?.let { GlassToaster.show(it); return }
         if (scheduled) {
             val trigger = runCatching { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US).apply { isLenient = false }.parse(scheduledDateTime)?.time }.getOrNull()
             if (trigger == null || trigger <= System.currentTimeMillis()) { GlassToaster.show("请选择未来的开始时间"); return }
@@ -432,20 +450,28 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
             action = GrabService.ACTION_START_QUEUE
             putExtra(GrabService.EXTRA_ACCOUNT_STORAGE_KEY, account)
             putExtra(GrabService.EXTRA_ACCOUNT_KEY, UserManager.getInstance().currentAccountKey)
-            putExtra(GrabService.EXTRA_PARALLEL_MODE, parallel)
-            putExtra(GrabService.EXTRA_ACADEMIC_TARGET, target != null)
+            putExtra(GrabService.EXTRA_PARALLEL_MODE, parallel && capabilities.maxConcurrency > 1)
+            putExtra(GrabService.EXTRA_ACADEMIC_TARGET, targetOnly)
             putExtra(GrabService.EXTRA_INTERVAL, delay); putExtra(GrabService.EXTRA_MAX_RETRY, attempts)
         }
-        ContextCompat.startForegroundService(context, intent)
+        try {
+            ContextCompat.startForegroundService(context, intent)
+            // Lock reorder/add immediately; the service snapshots this same order on startup.
+            running = true
+        } catch (e: Exception) {
+            running = false
+            GlassToaster.show(e.message ?: "无法启动任务，请重试")
+        }
     }
     val notificationPermission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-        if (granted) start(pendingScheduledStart) else GlassToaster.show("需要通知权限以显示抢课状态")
+        if (granted) start(pendingScheduledStart, pendingTargetStart) else GlassToaster.show("需要通知权限以显示抢课状态")
     }
-    fun requestStart(scheduled: Boolean) {
+    fun requestStart(scheduled: Boolean, targetOnly: Boolean = false) {
         pendingScheduledStart = scheduled
+        pendingTargetStart = targetOnly
         if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED)
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
-        else start(scheduled)
+        else start(scheduled, targetOnly)
     }
     DisposableEffect(account) {
         val receiver = object : BroadcastReceiver() {
@@ -475,10 +501,13 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
         targetCourseName = target?.courseName, targetCourseTeacher = target?.teacher, logText = log,
         schoolName = "${school.name} · ${AcademicCapabilities.name(school.academicSystem)}",
         onClearTargetCourse = { store.setTarget(account, null); target = null },
-        isFuzzyMatchMode = target?.useExactMatch == false, fuzzyMatchTarget = target?.takeUnless { it.useExactMatch }?.courseName,
+        isFuzzyMatchMode = fuzzy, onFuzzyMatchModeChange = ::changeMatching,
+        queueExecution = true, grabCapabilities = capabilities,
+        exactMatchingAvailable = items.none { it.stableSectionId.isBlank() },
+        onStartTarget = target?.let { { requestStart(false, true) } },
         onStartFuzzyMatch = { requestStart(false) }, onClearFuzzyMatchTarget = { store.setTarget(account, null); target = null },
         supportsImmediateManual = true,
-        systemNotice = AcademicCapabilities.queueLimit(school) + " 间隔至少 500 毫秒，每门最多 1000 轮。智能模式每轮可尝试同课程的多个教学班，教师和时段可能变化；手动填写的教学班、教师与时间仍作为条件。",
+        systemNotice = "按队列顺序执行，当前课程成功或次数耗尽后再处理下一门。间隔至少 500 毫秒，每门最多 1000 次。模糊匹配可尝试同课程的多个教学班；手动填写的教学班、教师与时间必须符合。",
         interval = interval, onIntervalChange = { interval = it; prefs.edit().putString("interval_$account", it).apply() },
         maxRetry = maxRetry, onMaxRetryChange = { maxRetry = it; prefs.edit().putString("max_retry_$account", it).apply() },
         onStart = { requestStart(false) },
@@ -492,6 +521,7 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
         }) },
         onClearLog = { log = ""; prefs.edit().remove("log_text_$account").apply() },
         queue = courses, isParallelMode = parallel,
+        currentQueueIndex = items.indexOfFirst { itemStatuses[it.key] == "GRABBING" },
         queueItemStatuses = itemStatuses.mapValues { (_, value) ->
             if (!running && value == "GRABBING") com.tyust.course.ui.screen.GrabQueueItemStatus.WAITING
             else runCatching { com.tyust.course.ui.screen.GrabQueueItemStatus.valueOf(value) }.getOrDefault(com.tyust.course.ui.screen.GrabQueueItemStatus.WAITING)
@@ -500,11 +530,15 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
         onQueueMoveItem = { from, to -> replace(items.toMutableList().apply { add(to, removeAt(from)) }) },
         onQueueRemoveItem = { index -> replace(items.filterIndexed { i, _ -> i != index }) },
         onQueueClear = { replace(emptyList()) }, showQueueModeLabels = true,
-        onQueueToggleMode = { index -> replace(items.mapIndexed { i, item -> if (i == index) item.copy(useExactMatch = !item.useExactMatch) else item }) },
+        onQueueToggleMode = { index ->
+            val item = items[index]
+            if (!item.useExactMatch && item.stableSectionId.isBlank()) GlassToaster.show("手动课程须先从课程列表指定真实教学班")
+            else replace(items.mapIndexed { i, value -> if (i == index) value.copy(useExactMatch = !value.useExactMatch) else value })
+        },
         isExactModeGlobal = items.filter { it.stableSectionId.isNotBlank() }.all { it.useExactMatch },
-        onQueueToggleAllMode = { exact -> replace(items.map { it.copy(useExactMatch = exact && it.stableSectionId.isNotBlank()) }) },
+        onQueueToggleAllMode = { exact -> changeMatching(!exact) },
         onAddCourse = { showManualAdd = true },
-        supportsParallel = AcademicCapabilities.supportsParallel(school))
+        supportsParallel = capabilities.maxConcurrency > 1, supportsScheduling = capabilities.scheduling, supportsManualAdd = capabilities.manual)
     if (showDateTimePicker) GlassDateTimePickerDialog(title = "选择抢课时间",
         initialMillis = remember(scheduledDateTime) {
             runCatching { SimpleDateFormat("yyyy/MM/dd HH:mm", Locale.US).apply { isLenient = false }
@@ -514,28 +548,16 @@ fun AcademicGrabQueueRoute(school: SchoolConfig) {
         prefs.edit().putString("scheduled_datetime_$account", scheduledDateTime).apply()
         showDateTimePicker = false
     }, onDismiss = { showDateTimePicker = false })
-    if (showManualAdd) SystemDialog(onDismissRequest = { showManualAdd = false }, title = { Text("添加课程到队列") },
-        content = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                com.tyust.course.ui.screen.SchoolFormField(label = "课程名称", value = inputCourse, onValueChange = { inputCourse = it }, placeholder = "完整课程名称")
-                if (school.academicSystem == AcademicSystem.ZF.id) {
-                    com.tyust.course.ui.screen.SchoolFormField(label = "教学班（选填）", value = inputSection, onValueChange = { inputSection = it },
-                        placeholder = "例如：篮球0003", helper = "按教学班名称匹配，留空则不限")
-                }
-                com.tyust.course.ui.screen.SchoolFormField(label = "教师（选填）", value = inputTeacher, onValueChange = { inputTeacher = it })
-                com.tyust.course.ui.screen.SchoolFormField(label = "上课时间（选填）", value = inputTime, onValueChange = { inputTime = it })
+    if (showManualAdd) com.tyust.course.ui.screen.ManualGrabCourseDialog(
+        enabled = !running && !hasScheduledTask, onDismiss = { showManualAdd = false }, onAdd = { draft ->
+            if (!sessions.isCurrent(expectedSession) || running || hasScheduledTask) false else {
+                val added = store.add(AcademicGrabItem(account, school.id, draft.name, draft.teacher, draft.time,
+                    useExactMatch = false, sectionName = draft.section))
+                if (added) { items = store.items(account); fuzzy = true }
+                else GlassToaster.show("该课程已在队列中")
+                added
             }
-        }, confirmButton = {
-            SystemPrimaryButton(text = "添加", enabled = inputCourse.isNotBlank() && !running, onClick = {
-                if (!sessions.isCurrent(expectedSession)) return@SystemPrimaryButton
-                val added = store.add(AcademicGrabItem(account, school.id, inputCourse.trim(), inputTeacher.trim(), inputTime.trim(),
-                    useExactMatch = false, sectionName = if (school.academicSystem == AcademicSystem.ZF.id) inputSection.trim() else ""))
-                if (added) {
-                    items = store.items(account); showManualAdd = false
-                    inputCourse = ""; inputSection = ""; inputTeacher = ""; inputTime = ""
-                } else GlassToaster.show("该课程已在队列中")
-            })
-        }, dismissButton = { SystemSecondaryButton(text = "取消", onClick = { showManualAdd = false }) })
+        })
 }
 
 private fun AcademicStatus.displayName(): String = when (this) {

@@ -4,26 +4,74 @@ import android.content.Context
 import com.tyust.course.academic.*
 import org.json.JSONObject
 
-/** Owns only this service's cookies/state. Academic sessions and credentials never enter it. */
+/** Private state always belongs to this service. School credentials are used only through a grant. */
 class ServicePluginSession(
     private val app: Context, val pkg: PluginPackage, private val accountScope: String,
+    private val requestConfirmation: ((String, String, String) -> Boolean)? = null,
+    private val readStateConfirmation: ((JSONObject) -> Boolean?)? = null,
     private val scopeStillActive: () -> Boolean = { true }
 ) {
     private val school = pkg.manifest.school
     private val baseUrl = "${school.getString("protocol")}://${school.getString("domain")}${school.getString("basePath")}".trimEnd('/') + "/"
     private var adapter = createAdapter("")
     private var closed = false
+    private var sharedAccess: PluginAcademicSession? = null
+    private var sharedGrant = ""
+    val sharesAcademicSession: Boolean get() = pkg.manifest.sharesAcademicSession
     val needsLogin: Boolean get() = pkg.manifest.service!!.getJSONObject("authentication").getString("mode") == "password"
-    var authenticated = !needsLogin
-        private set
+    private var independentAuthenticated = !needsLogin
+    val authenticated: Boolean get() = !closed && if (!sharesAcademicSession) independentAuthenticated else runCatching {
+        val access = sharedAccess ?: return@runCatching false
+        access.requireGrant(sharedGrant); access.requireCredentials(); true
+    }.getOrDefault(false)
     val session: AcademicSession get() = adapter.session
 
-    init { require(pkg.manifest.isService) }
+    init {
+        require(pkg.manifest.isService)
+        ServicePluginContract.validateManifest(pkg.manifest)
+        if (sharesAcademicSession) runCatching { restoreAcademicAuthorization() }
+    }
 
-    private fun createAdapter(username: String): PluginAcademicAdapter {
-        val scope = PluginJson.sha256((accountScope + "\u0000" + pkg.manifest.id + "\u0000" + username).toByteArray())
+    private fun createAdapter(username: String, requestBase: String = baseUrl, academicKey: AcademicSessionKey? = null): PluginAcademicAdapter {
+        // Even developer previews must partition private service data by the real school account.
+        val owner = academicKey?.let { "shared:${it.schoolId}\u0000${it.accountKey}" } ?: accountScope
+        val scope = PluginJson.sha256((owner + "\u0000" + pkg.manifest.id + "\u0000" + username).toByteArray())
         val key = AcademicSessionKey(school.getString("id"), "service:$scope")
-        return PluginAcademicAdapter(app.applicationContext, pkg, AcademicSession(key, baseUrl), scopeStillActive = { !closed && scopeStillActive() })
+        return PluginAcademicAdapter(app.applicationContext, pkg, AcademicSession(key, requestBase), scopeStillActive = { !closed && scopeStillActive() })
+    }
+
+    fun academicAuthorizationDescription(): String {
+        ensureScope(); check(sharesAcademicSession)
+        val access = academicAccess()
+        val description = access.description()
+        access.requireCredentials()
+        sharedAccess = access; sharedGrant = ""
+        return description
+    }
+    /** A renewed school login needs a fresh handle, not another consent dialog. */
+    fun restoreAcademicAuthorization(): Boolean {
+        ensureScope(); check(sharesAcademicSession)
+        val access = academicAccess()
+        val grant = access.existingGrant() ?: return false
+        adopt(access, grant)
+        return true
+    }
+    private fun academicAccess() = PluginAcademicSession(app, pkg, { !closed && scopeStillActive() }).also {
+        it.confirmUnknownRequest = requestConfirmation
+        it.confirmReadStateRequest = readStateConfirmation
+    }
+    /** Called by the host only after the user confirms the displayed authorization. */
+    fun authorizeAcademicSession(remember: Boolean = false, includeReadState: Boolean = false) {
+        ensureScope(); check(sharesAcademicSession)
+        val access = checkNotNull(sharedAccess) { "请先确认共享教务登录的授权范围" }
+        access.requireCredentials()
+        adopt(access, access.authorize(remember, includeReadState).getString("grant"))
+    }
+    private fun adopt(access: PluginAcademicSession, grant: String) {
+        access.requireGrant(grant); access.requireCredentials()
+        adapter.clearLoginState(); adapter.session.retire()
+        adapter = createAdapter("", access.session.baseUrl, access.session.key)
+        sharedAccess = access; sharedGrant = grant
     }
 
     suspend fun login(username: String, password: String): LoginResult {
@@ -39,15 +87,22 @@ class ServicePluginSession(
     suspend fun refreshCaptcha(): CaptchaChallenge? { ensureScope(); return adapter.refreshCaptcha().also { ensureScope() } }
     private fun acceptLogin(result: LoginResult) {
         ensureScope()
-        authenticated = result.status == AcademicStatus.SUCCESS
+        independentAuthenticated = result.status == AcademicStatus.SUCCESS
         if (result.status == AcademicStatus.HUMAN_VERIFICATION_REQUIRED) {
             logout()
             throw AcademicException(AcademicStatus.UNSUPPORTED, "此服务要求网页认证，请使用官方网页；当前校园插件支持账号密码和验证码登录")
         }
     }
     suspend fun page(id: String, params: JSONObject = JSONObject()): JSONObject = invoke("service.page", JSONObject().put("pageId", id).put("params", params))
+    fun reusableAction(id: String): Boolean = sharedAccess?.reusableAction(id) != null
+    fun rememberedAction(id: String): Boolean = sharedAccess?.rememberedAction(id) == true
+    fun rememberAction(id: String) {
+        ensureScope(); val access = checkNotNull(sharedAccess)
+        access.requireGrant(sharedGrant)
+        access.rememberOperation(access.reusableAction(id) ?: throw PluginException(PluginErrorCode.PERMISSION_DENIED, "操作未获提供者审核"))
+    }
     suspend fun action(id: String, params: JSONObject, confirmed: Boolean): JSONObject = invoke("service.action", JSONObject().put("actionId", id).put("params", params), confirmed)
-    fun requireActive() { ensureScope(); session.requireActive(); if (!authenticated) throw AcademicException(AcademicStatus.SESSION_EXPIRED, "请先登录此服务") }
+    fun requireActive() { ensureScope(); session.requireActive(); if (!authenticated) throw AcademicException(AcademicStatus.SESSION_EXPIRED, if (sharesAcademicSession) "请先授权使用本校教务登录" else "请先登录此服务") }
     suspend fun nativeResult(result: JSONObject): JSONObject {
         requireActive()
         val callback = ServiceNativePolicy.operation(pkg.manifest, result.getString("operationId")).getString("resultActionId")
@@ -56,16 +111,27 @@ class ServicePluginSession(
     }
     private suspend fun invoke(method: String, args: JSONObject, confirmed: Boolean = false): JSONObject {
         ensureScope()
-        if (!authenticated) throw AcademicException(AcademicStatus.SESSION_EXPIRED, "请先登录此服务")
-        try { return adapter.invoke(method, args, confirmed).also { ensureScope() } }
-        catch (error: AcademicException) { if (error.status == AcademicStatus.SESSION_EXPIRED) logout(); throw error }
+        requireActive()
+        try {
+            return (if (sharesAcademicSession) adapter.invokeSharedService(method, args, confirmed, checkNotNull(sharedAccess), sharedGrant)
+                else adapter.invoke(method, args, confirmed)).also { ensureScope() }
+        } catch (error: AcademicException) {
+            if (error.status == AcademicStatus.SESSION_EXPIRED) {
+                if (sharesAcademicSession) { sharedGrant = ""; resetPrivateSession() } else logout()
+            }
+            throw error
+        }
     }
     fun logout() {
+        if (sharesAcademicSession) { PluginAcademicSession.revoke(app, pkg.manifest.id); sharedGrant = ""; sharedAccess = null }
+        resetPrivateSession()
+    }
+    private fun resetPrivateSession() {
         adapter.clearLoginState(); adapter.session.retire()
-        authenticated = !closed && !needsLogin
+        independentAuthenticated = !closed && !needsLogin
         if (!closed) adapter = createAdapter("")
     }
-    fun close() { closed = true; authenticated = false; adapter.clearLoginState(); adapter.session.retire() }
+    fun close() { closed = true; independentAuthenticated = false; sharedGrant = ""; adapter.clearLoginState(); adapter.session.retire() }
     private fun ensureScope() {
         if (closed || !scopeStillActive()) { close(); throw AcademicException(AcademicStatus.SESSION_EXPIRED, "学校、账号或插件状态已改变，请重新打开校园服务") }
     }

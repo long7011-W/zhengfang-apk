@@ -10,7 +10,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -99,9 +98,11 @@ private fun wallpaperHeaderTint(): Color {
     // shows through around the sampled rounded rectangle as a pale frame and seam.
     // Ordinary image/color wallpapers stay continuous; a solid scrim is an explicit
     // high-contrast accommodation only.
-    return if (customWallpaper && rememberGlassAccessibilityMode().highContrast)
-        androidx.compose.material3.MaterialTheme.colorScheme.surface.copy(alpha = 0.90f)
-    else Color.Transparent
+    return when {
+        !customWallpaper -> Color.Transparent
+        rememberGlassAccessibilityMode().highContrast -> androidx.compose.material3.MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)
+        else -> LocalWallpaperAppearanceColors.current.surface
+    }
 }
 
 @Composable
@@ -122,8 +123,10 @@ internal fun StatusBarFrost(
     collapse: Float,
     backdrop: Backdrop
 ) {
-    val isLightTheme = !rememberGlassDarkTheme()
-    val tint = if (isLightTheme) {
+    val appearance = LocalWallpaperAppearanceColors.current
+    val isLightTheme = appearance.usesDarkForeground
+    val customWallpaper = com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset
+    val tint = if (customWallpaper) appearance.surface else if (isLightTheme) {
         Color.White.copy(alpha = 0.46f * collapse)
     } else {
         Color(0xFF1E2024).copy(alpha = 0.52f * collapse)
@@ -134,6 +137,7 @@ internal fun StatusBarFrost(
         modifier = Modifier
             .fillMaxWidth()
             .height(height)
+            .graphicsLayer { alpha = collapse.coerceIn(0f, 1f) }
             .glassEdgeFadeBottom(StatusBarFrostFade)
             .drawBackdrop(
                 backdrop = backdrop,
@@ -175,7 +179,9 @@ internal fun HeaderGlassSlab(
     cornerRadius: Dp,
     modifier: Modifier = Modifier
 ) {
-    val isLightTheme = !rememberGlassDarkTheme()
+    val appearance = LocalWallpaperAppearanceColors.current
+    val isLightTheme = appearance.usesDarkForeground
+    val customWallpaper = com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset
     val accessibility = rememberGlassAccessibilityMode()
     val material = remember(accessibility) {
         GlassMaterials.resolve(GlassMaterialRole.Navigation, accessibility)
@@ -183,20 +189,20 @@ internal fun HeaderGlassSlab(
     }
     val slabShape = RoundedCornerShape(cornerRadius)
     // 白雾压薄一档：玻璃感要来自边缘光与折射，白雾一厚就是一张白卡片
-    val surface = if (isLightTheme) {
+    val surface = if (customWallpaper) appearance.surface else if (isLightTheme) {
         Color.White.copy(alpha = 0.22f * strength)
     } else {
         Color(0xFF1E2024).copy(alpha = 0.28f * strength)
     }
     val sheen = Brush.verticalGradient(
-        colors = listOf(
-            Color.White.copy(alpha = (if (isLightTheme) 0.24f else 0.12f) * strength),
-            Color.Transparent
-        )
+        0f to Color.White.copy(alpha = (if (isLightTheme) 0.24f else 0.12f) * strength),
+        0.55f to Color.Transparent,
+        1f to Color.Transparent
     )
 
     Box(
         modifier = modifier
+            .graphicsLayer { alpha = strength.coerceIn(0f, 1f) }
             .drawBackdrop(
                 backdrop = backdrop,
                 shape = { slabShape },
@@ -247,10 +253,9 @@ internal fun HeaderGlassSlab(
                 onDrawSurface = {
                     drawRect(surface)
                     // 上半镜面：厚度感来自这一道高光，而不是更厚的白雾
-                    drawRect(
-                        brush = sheen,
-                        size = Size(size.width, size.height * 0.55f)
-                    )
+                    // Resolve the gradient against the full layer. Cropping its
+                    // draw rectangle at 55% cuts off a still-visible reflection.
+                    drawRect(brush = sheen)
                 }
             )
             // 边缘光不依赖 AGSL，是 API 31/32 上唯一稳定成立的玻璃特征

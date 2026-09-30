@@ -36,9 +36,10 @@ object ModuleMotion {
 fun Modifier.moduleEntrance(group: Int, progress: (() -> Float)? = null): Modifier {
     val timeline = progress ?: LocalModuleEntrance.current ?: return this
     return graphicsLayer {
-        // Auto creates a bounds-sized offscreen layer while alpha < 1, clipping
-        // glass shadows until the last frame. Fade the draw commands directly.
-        compositingStrategy = CompositingStrategy.ModulateAlpha
+        // Let HWUI composite the animated content layer. ModulateAlpha can retain
+        // transparent nested text display lists on API 31/32 until a later scroll.
+        // Optical backgrounds/shadows belong to sibling surfaces, not this layer.
+        compositingStrategy = CompositingStrategy.Auto
         val p = ModuleMotion.progress(timeline(), group)
         alpha = p
         translationY = 16.dp.toPx() * (1f - p)

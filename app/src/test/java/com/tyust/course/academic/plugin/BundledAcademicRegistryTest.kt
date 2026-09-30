@@ -25,6 +25,24 @@ class BundledAcademicRegistryTest {
         academicSystem = definition.system.id
     }
 
+    @Test fun grabCapabilityPolicyBlocksUnverifiedSubmissionAndTracksDisabling() {
+        val definition = BundledAcademicProviders.definitions.last()
+        val school = school(definition)
+        assertTrue(AcademicProviderRegistry.hasCapability(school, "selection.select"))
+        val capabilities = GrabCapabilities.forSchool(school, "test")
+        assertFalse(capabilities.available)
+        assertTrue(capabilities.reason.contains("乘方"))
+        val zf = SchoolConfig("policy-zf", "Test", "school.example", "https").apply { academicSystem = "zf" }
+        assertTrue(GrabCapabilities.forSchool(zf).available)
+        val id = AcademicProviderRegistry.resolve(zf)!!.manifest.id
+        val revision = AcademicProviderRegistry.revision.value
+        try {
+            AcademicProviderRegistry.setSchoolEnabled(id, zf, false)
+            assertTrue(AcademicProviderRegistry.revision.value > revision)
+            assertFalse(GrabCapabilities.forSchool(zf).available)
+        } finally { AcademicProviderRegistry.setSchoolEnabled(id, zf, true) }
+    }
+
     @Test fun freshInstallCreatesBothStudyAndLoginAdaptersWithoutImport() {
         assertTrue(AcademicProviderRegistry.packages().list().isEmpty())
         for (definition in BundledAcademicProviders.definitions) {
@@ -106,6 +124,7 @@ class BundledAcademicRegistryTest {
                 AcademicProviderRegistry.reload()
                 AcademicProviderRegistry.choose(school, pkg.manifest.id)
                 val adapter = AcademicGatewayFactory.create(school, "inherited-account") as PluginAcademicAdapter
+                assertEquals(type == "jinzhi", GrabCapabilities.forSchool(school, "inherited-account").available)
                 assertFalse(adapter.pinned.bundled)
                 assertTrue(adapter.pinned.manifest.capabilities.isEmpty())
                 assertTrue(adapter.effectiveCapabilities.containsAll(setOf("auth.start", "auth.resume", "study.terms", "study.schedule", "study.grades", "study.exams")))

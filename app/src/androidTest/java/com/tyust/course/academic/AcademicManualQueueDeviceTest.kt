@@ -92,7 +92,7 @@ class AcademicManualQueueDeviceTest {
         compose.onNodeWithTag("grab-console-list").performScrollToNode(hasText(text))
         compose.onNodeWithText(text).performClick()
         compose.onNodeWithText("教学班（选填）").performScrollTo().assertIsDisplayed()
-        compose.onAllNodes(hasSetTextAction()).assertCountEquals(4)
+        compose.onAllNodes(hasSetTextAction()).assertCountEquals(3)
     }
 
     private fun fillCourse(section: String) {
@@ -130,7 +130,8 @@ class AcademicManualQueueDeviceTest {
         showQueue(compact = true)
         openAdd("手动添加")
         fillCourse("篮球0003")
-        compose.onAllNodes(hasSetTextAction())[3].performScrollTo().performTextInput("周一")
+        compose.onNodeWithTag("manual-weekday").performScrollTo().performClick()
+        compose.onNodeWithText("周一").performClick()
         compose.onNodeWithText("添加").assertIsDisplayed().assertIsEnabled()
         capture("new-zf-manual-compact")
         compose.onNodeWithText("添加").performClick()
@@ -138,6 +139,29 @@ class AcademicManualQueueDeviceTest {
             val saved = AcademicGrabQueueStore(isolated).items(account).single()
             assertEquals("篮球0003", saved.sectionName)
             assertEquals("周一", saved.time)
+        }
+    }
+
+    @Test fun dropdownRemainsVisibleAtRestAndSavesTeacherAndTimeConstraints() {
+        showQueue()
+        openAdd("手动添加")
+        fillCourse("篮球0003")
+        compose.onAllNodes(hasSetTextAction())[2].performScrollTo().performTextInput("示例教师")
+        compose.onNodeWithTag("manual-weekday").performScrollTo().performClick()
+        compose.mainClock.advanceTimeBy(1600)
+        compose.onNodeWithText("周三").assertIsDisplayed()
+        capture("new-zf-weekday-open")
+        Thread.sleep(2000)
+        compose.onNodeWithText("周三").assertIsDisplayed()
+        capture("new-zf-weekday-rest")
+        compose.onNodeWithText("周三").performClick()
+        compose.onNodeWithTag("manual-period").performScrollTo().performClick()
+        compose.onNodeWithText("3-4节").performClick()
+        compose.onNodeWithText("添加").performClick()
+        compose.runOnIdle {
+            val item = AcademicGrabQueueStore(isolated).items(account).single()
+            assertEquals("示例教师", item.teacher)
+            assertEquals("周三 3-4节", item.time)
         }
     }
 

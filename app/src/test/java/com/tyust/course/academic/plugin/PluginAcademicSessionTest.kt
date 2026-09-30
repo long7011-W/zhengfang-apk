@@ -121,6 +121,32 @@ class PluginAcademicSessionTest {
         a.untrack(confirmed)
     }
 
+    @Test fun callingAnUnknownEndpointQueryDoesNotBypassConfirmation() {
+        val a = access(); a.authorize()
+        assertThrows(PluginException::class.java) { a.requireReviewedReadOrConfirmation(request()) }
+        var confirmations = 0
+        a.confirmUnknownRequest = { _, _, _ -> confirmations++; true }
+        a.requireReviewedReadOrConfirmation(request())
+        a.requireReviewedReadOrConfirmation(request())
+        assertEquals(2, confirmations)
+        a.confirmUnknownRequest = { _, _, _ -> false }
+        assertThrows(PluginException::class.java) { a.requireReviewedReadOrConfirmation(request()) }
+        assertEquals(0, server.requestCount)
+    }
+
+    @Test fun rememberedConsentRebindsAfterReloginButRevocationWinsAgainstAnOldPrompt() {
+        val caller = pkg(); val old = access(caller)
+        val previous = old.authorize(remember = true).getString("grant")
+        user.saveCookieLogin("SYNTHETIC=new-login")
+        val replacement = access(caller)
+        val next = replacement.existingGrant()
+        assertNotNull(next); assertNotEquals(previous, next)
+        assertThrows(PluginException::class.java) { old.requireGrant(previous) }
+        PluginAcademicSession.revoke(app, caller.manifest.id)
+        assertThrows(PluginException::class.java) { replacement.authorize(remember = true) }
+        assertNull(access(caller).existingGrant())
+    }
+
     @Test fun cookieTokenBindingStaysInTheHostAndRequiresNetworkPermission() {
         user.saveCookieLogin("token=synthetic-token")
         val caller = pkg(); val a = access(caller); val grant = a.authorize().getString("grant")

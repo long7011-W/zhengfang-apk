@@ -1,5 +1,11 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.system.WallpaperCaption
+import com.tyust.course.ui.system.rememberWallpaperRegionState
+import com.tyust.course.ui.system.rememberWallpaperRegionAppearance
+import com.tyust.course.ui.system.wallpaperRegion
+import com.tyust.course.ui.system.readableWallpaper
+
 import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.graphics.drawscope.withTransform
@@ -158,7 +164,11 @@ fun GrabProScreen(
     supportsParallel: Boolean = true,
     supportsManualAdd: Boolean = true,
     supportsImmediateManual: Boolean = false,
-    systemNotice: String = ""
+    systemNotice: String = "",
+    queueExecution: Boolean = false,
+    grabCapabilities: com.tyust.course.academic.GrabCapabilities? = null,
+    exactMatchingAvailable: Boolean = true,
+    onStartTarget: (() -> Unit)? = null
 ) {
     val scrollState = rememberLazyListState()
     var localScheduledMode by rememberSaveable { mutableStateOf(isScheduledMode && supportsScheduling) }
@@ -199,6 +209,8 @@ fun GrabProScreen(
         waitingForSchedule = hasScheduledTask && !isRunning,
         courseCount = queue.size, attempts = retryCount, successes = successCount, failures = failCount,
         taskTitle = when {
+            queueExecution && isRunning -> currentCourse?.name ?: "正在执行队列"
+            queueExecution -> if (queue.isEmpty()) "添加你的第一门课程" else "${queue.size} 门课程待执行"
             isFuzzyMatchMode && !localScheduledMode -> fuzzyMatchTarget?.takeIf { it.isNotBlank() } ?: "选择要监控的课程组"
             isRunning -> currentCourse?.name ?: targetCourseName ?: "正在执行队列"
             !targetCourseName.isNullOrBlank() -> targetCourseName
@@ -206,6 +218,7 @@ fun GrabProScreen(
             else -> "添加你的第一门课程"
         },
         taskSubtitle = when {
+            queueExecution && !localScheduledMode -> if (isParallelMode) "按顺序分配 · 最多同时 2 门" else "当前课程结束后再处理下一门"
             hasScheduledTask && localScheduledMode -> scheduledTaskInfo.ifBlank { "等待计划时间" }
             !targetCourseName.isNullOrBlank() -> targetCourseTeacher.orEmpty()
             isFuzzyMatchMode && !localScheduledMode -> "持续检查所选课程组"
@@ -224,6 +237,7 @@ fun GrabProScreen(
         isRunning -> true
         localScheduledMode && hasScheduledTask -> onCancelScheduledTask != null
         localScheduledMode -> scheduledDateTime.isNotBlank() && queue.isNotEmpty() && onScheduledStart != null
+        queueExecution -> queue.isNotEmpty() && grabCapabilities?.available != false
         isFuzzyMatchMode -> !fuzzyMatchTarget.isNullOrBlank() && onStartFuzzyMatch != null
         else -> !targetCourseName.isNullOrBlank() || queue.isNotEmpty()
     }
@@ -232,6 +246,7 @@ fun GrabProScreen(
             isRunning -> onStop()
             localScheduledMode && hasScheduledTask -> onCancelScheduledTask?.invoke()
             localScheduledMode -> onScheduledStart?.invoke()
+            queueExecution -> onStart()
             isFuzzyMatchMode -> onStartFuzzyMatch?.invoke()
             else -> {
                 val manualCount = queue.count { it.classId.isNullOrEmpty() }
@@ -247,7 +262,7 @@ fun GrabProScreen(
             else activateScheduleSetup()
         }
     }
-    val queueHeadingIndex = 2 + if (systemNotice.isNotBlank()) 1 else 0
+    val queueHeadingIndex = 2 + (if (systemNotice.isNotBlank()) 1 else 0) + (if (onStartTarget != null && !targetCourseName.isNullOrBlank()) 1 else 0)
     val advancedIndex = queueHeadingIndex + 1 + if (queue.isEmpty()) 1 else queue.size + if (supportsManualAdd && onAddCourse != null) 1 else 0
     fun reveal(index: Int) { scope.launch { if (reduced) scrollState.scrollToItem(index) else scrollState.animateScrollToItem(index) } }
     val quickActions = buildList {
@@ -326,7 +341,11 @@ fun GrabProScreen(
                 TaskOverviewCard(console,
                     modeControl = {
                         TaskModeBar(isFuzzyMatchMode, localScheduledMode, configurationEnabled,
-                            onFuzzyMatchModeChange, if (supportsScheduling && onPickDateTime != null) openSchedule else null)
+                            onFuzzyMatchModeChange, if (supportsScheduling && onPickDateTime != null) openSchedule else null,
+                            exactAvailable = exactMatchingAvailable && grabCapabilities?.exact != false,
+                            fuzzyAvailable = grabCapabilities?.fuzzy != false,
+                            schedulingAvailable = supportsScheduling,
+                            matchingReason = if (!exactMatchingAvailable) "队列含手动课程，精确匹配须先从课程列表指定教学班" else "")
                     },
                     onClearTarget = when {
                         !configurationEnabled -> null
@@ -336,8 +355,17 @@ fun GrabProScreen(
                     })
                 }
             }
+            if (onStartTarget != null && !targetCourseName.isNullOrBlank()) item(key = "single-target") {
+                SystemCard(Modifier.fillMaxWidth()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("单课目标：$targetCourseName", style = MaterialTheme.typography.titleSmall)
+                        Text("此入口仅执行该目标，底部开始按钮执行课程队列", style = MaterialTheme.typography.bodySmall)
+                        SystemSecondaryButton("仅执行此目标", onStartTarget, Modifier.fillMaxWidth(), enabled = configurationEnabled)
+                    }
+                }
+            }
             if (systemNotice.isNotBlank()) item(key = "school-notice") {
-                Text(systemNotice, Modifier.moduleEntrance(1), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                WallpaperCaption(systemNotice, Modifier.moduleEntrance(1))
             }
             item(key = "scheduled-details") {
                 AnimatedVisibility(localScheduledMode,
@@ -376,10 +404,13 @@ fun GrabProScreen(
                 }
             }
             item(key = "queue-heading") {
-                Row(Modifier.fillMaxWidth().moduleEntrance(2), verticalAlignment = Alignment.CenterVertically) {
-                    Text("课程队列", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                val region = rememberWallpaperRegionState()
+                val appearance = rememberWallpaperRegionAppearance(region)
+                Row(Modifier.fillMaxWidth().moduleEntrance(2).wallpaperRegion(region)
+                    .readableWallpaper(appearance).padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Text("课程队列", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, color = appearance.onSurface)
                     AnimatedValueText(queue.size.toString(), Modifier.padding(start = 8.dp),
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        color = appearance.onSurfaceVariant)
                     Spacer(Modifier.weight(1f))
                     SystemIconButton(Icons.Default.DeleteSweep, "清空队列", { onQueueClear?.invoke() },
                         enabled = configurationEnabled && queue.isNotEmpty() && onQueueClear != null, chip = false)
@@ -404,16 +435,16 @@ fun GrabProScreen(
                             NumericField(interval, onIntervalChange, "重试间隔 (ms)", Modifier.weight(1f), configurationEnabled)
                             NumericField(maxRetry, onMaxRetryChange, "最大重试次数", Modifier.weight(1f), configurationEnabled)
                         }
-                        if (supportsParallel && queue.size > 1 && onParallelModeChange != null) {
+                        if (onParallelModeChange != null) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Column(Modifier.weight(1f)) {
                                     Text("并行执行", style = MaterialTheme.typography.titleSmall)
-                                    Text("轮询全部课程，同时处理最多 2 门；无名额时继续等待", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(if (supportsParallel) "按顺序分配，最多同时处理 2 门课程" else grabCapabilities?.parallelReason ?: "当前教务仅支持串行执行", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
-                                LiquidSwitch(isParallelMode, onParallelModeChange, enabled = configurationEnabled)
+                                LiquidSwitch(isParallelMode && supportsParallel, onParallelModeChange, enabled = configurationEnabled && supportsParallel && queue.size > 1)
                             }
                         }
-                        if (showQueueModeLabels && onQueueToggleAllMode != null && queue.isNotEmpty()) {
+                        if (!queueExecution && showQueueModeLabels && onQueueToggleAllMode != null && queue.isNotEmpty()) {
                             Text("队列匹配方式", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             SystemSegmentedControl(listOf("智能匹配", "精确匹配"), if (isExactModeGlobal) 1 else 0,
                                 enabled = configurationEnabled,

@@ -52,7 +52,7 @@ internal fun GlassActionRail(
     Box(
         modifier.width((48 * actions.size).dp).height(48.dp)
             .adaptiveGlassChip(backdrop, RoundedCornerShape(24.dp), optics,
-                enabled = actions.any { it.enabled }),
+                enabled = actions.any { it.enabled }, glyphColor = colors.onSurface),
         contentAlignment = Alignment.Center
     ) {
         Row(Modifier.graphicsLayer {

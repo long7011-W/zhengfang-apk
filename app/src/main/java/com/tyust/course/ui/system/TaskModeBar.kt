@@ -15,68 +15,41 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
-/** Matching stays in the liquid selector; timing opens a separate settings action. */
 @Composable
 fun TaskModeBar(
-    fuzzy: Boolean,
-    scheduled: Boolean,
-    enabled: Boolean,
-    onFuzzyChange: ((Boolean) -> Unit)?,
-    onScheduleClick: (() -> Unit)?,
-    modifier: Modifier = Modifier
+    fuzzy: Boolean, scheduled: Boolean, enabled: Boolean,
+    onFuzzyChange: ((Boolean) -> Unit)?, onScheduleClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    exactAvailable: Boolean = true, fuzzyAvailable: Boolean = true,
+    schedulingAvailable: Boolean = true, matchingReason: String = ""
 ) {
-    if (onFuzzyChange == null && onScheduleClick == null) return
     val colors = MaterialTheme.colorScheme
     val fontScale = LocalDensity.current.fontScale
-    Row(
-        modifier.fillMaxWidth().heightIn(min = 48.dp).testTag("task-mode-bar"),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        if (onFuzzyChange != null) {
-            LiquidSegmentedControl(
-                options = listOf("精确执行", "模糊监控"),
-                selectedIndex = if (fuzzy) 1 else 0,
-                onSelect = { onFuzzyChange(it == 1) },
-                modifier = Modifier.weight(1f).testTag("task-matching-selector"),
-                enabled = enabled && !scheduled,
-                height = 48.dp,
+    Column(modifier.fillMaxWidth().testTag("task-mode-bar"), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth().heightIn(min = 48.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+            LiquidSegmentedControl(options = listOf("精确匹配", "模糊匹配"), selectedIndex = if (fuzzy) 1 else 0,
+                onSelect = { onFuzzyChange?.invoke(it == 1) }, modifier = Modifier.weight(1f).testTag("task-matching-selector"),
+                enabled = enabled && onFuzzyChange != null && exactAvailable && fuzzyAvailable, height = 48.dp,
                 labelContent = { index, selection, color ->
-                    val monitor = index == 1
+                    val fuzzyOption = index == 1
                     val label = if (fontScale > 1.3f) {
-                        if (monitor) "监控" else "精确"
+                        if (fuzzyOption) "模糊" else "精确"
                     } else {
-                        if (monitor) "模糊监控" else "精确执行"
+                        if (fuzzyOption) "模糊匹配" else "精确匹配"
                     }
-                    Row(
-                        Modifier.padding(horizontal = 4.dp).clearAndSetSemantics {},
+                    Row(Modifier.padding(horizontal = 4.dp).clearAndSetSemantics {},
                         horizontalArrangement = Arrangement.spacedBy(5.dp, Alignment.CenterHorizontally),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        AnimatedLineIcon(
-                            if (monitor) AnimatedIconSpec.ScanLock else AnimatedIconSpec.Lock,
-                            Modifier.size(16.dp),
-                            sharedProgress = if (monitor) 1f else null,
-                            tint = color
-                        )
+                        verticalAlignment = Alignment.CenterVertically) {
+                        AnimatedLineIcon(if (fuzzyOption) AnimatedIconSpec.ScanLock else AnimatedIconSpec.Lock,
+                            Modifier.size(16.dp), sharedProgress = if (fuzzyOption) 1f else null, tint = color)
                         Text(label, style = MaterialTheme.typography.labelSmall,
                             fontWeight = if (selection >= 0.55f) FontWeight.SemiBold else FontWeight.Medium,
                             color = color, maxLines = 1, softWrap = false)
                     }
-                }
-            )
-        } else {
-            Row(Modifier.weight(1f).padding(horizontal = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                AnimatedLineIcon(AnimatedIconSpec.Courses, Modifier.size(17.dp), tint = colors.primary)
-                Text("队列执行", style = MaterialTheme.typography.labelMedium, color = colors.onSurface)
-            }
-        }
-        if (onScheduleClick != null) {
-            LiquidButton(
-                onClick = onScheduleClick,
-                enabled = enabled,
+                })
+            LiquidButton(onClick = { onScheduleClick?.invoke() },
+                enabled = enabled && schedulingAvailable && onScheduleClick != null,
                 modifier = Modifier.width(74.dp * fontScale.coerceIn(1f, 1.2f)).height(48.dp)
                     .semantics {
                         contentDescription = "设置定时任务"
@@ -84,14 +57,16 @@ fun TaskModeBar(
                     }.testTag("task-mode-timing"),
                 style = LiquidButtonStyle.Surface,
                 contentColor = if (scheduled) colors.primary else colors.onSurface,
-                horizontalPadding = 8.dp
-            ) {
+                horizontalPadding = 8.dp) {
                 AnimatedLineIcon(AnimatedIconSpec.Clock, Modifier.size(16.dp),
                     state = if (scheduled) IconVisualState.Selected else IconVisualState.Idle)
-                Text("定时", Modifier.clearAndSetSemantics {},
-                    style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold,
-                    maxLines = 1, softWrap = false)
+                Text("定时", Modifier.clearAndSetSemantics {}, style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold, maxLines = 1, softWrap = false)
             }
         }
+        if (matchingReason.isNotBlank()) Text(matchingReason, style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!schedulingAvailable) Text("当前教务不支持定时任务", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }

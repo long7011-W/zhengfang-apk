@@ -443,7 +443,13 @@ class PluginCenterActivity : ComponentActivity() {
                         }
                         TextButton(onClick = { web(PluginSourceDetails.page(pkg)) }) { Text("本版本源码与参与修改") }
                     }
-                    if ("academic.session" in pkg.manifest.permissions) {
+                        val security = PluginDataGuard(this@PluginCenterActivity, pkg)
+                        Detail("个人数据", if (security.sensitive()) "已接触个人数据；外传需独立授权" else "尚未读取受保护学业数据")
+                        PluginJson.objects(security.status().getJSONArray("destinations")).forEach { destination ->
+                            Detail(destination.getString("origin"), if (destination.getBoolean("authorized")) "已授权 · ${destination.getString("purpose")}" else "未授权")
+                        }
+                        TextButton(onClick = { security.revoke(); message = "已撤销个人数据外传授权"; generation++; selected = null }) { Text("撤销外传授权") }
+                    if ("academic.session" in pkg.manifest.permissions || pkg.manifest.sharesAcademicSession) {
                         val shared = runCatching { PluginAcademicSession(this@PluginCenterActivity, pkg, { true }).authorized() }.getOrDefault(false)
                         Detail("教务登录共享", if (shared) "已授权使用当前教务登录" else "尚未授权；首次使用时确认")
                         if (shared) TextButton(onClick = {

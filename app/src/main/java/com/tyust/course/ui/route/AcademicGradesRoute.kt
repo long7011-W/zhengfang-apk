@@ -25,97 +25,154 @@ import java.util.Locale
 
 @Composable
 fun AcademicGradesRoute(school: SchoolConfig) {
-    val context = LocalContext.current
+    val providerRevision by com.tyust.course.academic.plugin.AcademicProviderRegistry.revision.collectAsState()
+    val provider = remember(school, providerRevision) {
+        val registry = com.tyust.course.academic.plugin.AcademicProviderRegistry
+        listOf("study.terms", "study.grades", "study.exams", "study.gradeDetails")
+            .joinToString(":") { registry.operationProvider(school, it)?.digest.orEmpty() }
+    }
     val account = UserManager.getInstance().currentAccountStorageKey
+    key(account, provider) { AcademicGradesContent(school, account, provider) }
+}
+
+@Composable
+private fun AcademicGradesContent(school: SchoolConfig, account: String, provider: String) {
+    val context = LocalContext.current
     val sessions = UserManager.getInstance().sessionState
     val session by sessions.state.collectAsState()
     val expectedSession = session.token
     val detailScope = rememberCoroutineScope()
-    val detailRequests = remember(account, session.token) { mutableSetOf<String>() }
-    var tab by rememberSaveable(account) { mutableIntStateOf(0) }
+    val detailRequests = remember(session.token) { mutableSetOf<String>() }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
     val supportedTabs = buildSet {
         if (com.tyust.course.academic.plugin.AcademicProviderRegistry.hasCapability(school, "study.grades")) { add(0); add(1) }
         if (com.tyust.course.academic.plugin.AcademicProviderRegistry.hasCapability(school, "study.exams")) add(2)
     }
-    LaunchedEffect(account, supportedTabs) { if (tab !in supportedTabs && supportedTabs.isNotEmpty()) tab = supportedTabs.first() }
-    var report by rememberPageData("academic.grades") { AcademicGradeReport(emptyList()) }
-    var reportLoaded by rememberPageData("academic.grades.loaded") { false }
-    var semester by rememberSaveable(account) { mutableStateOf("") }
-    var loading by remember(account) { mutableStateOf(true) }
-    var error by remember(account) { mutableStateOf("") }
-    var revision by remember(account) { mutableIntStateOf(0) }
-    var exams by rememberPageData<List<ExamItemUi>>("academic.exams") { emptyList() }
-    var examsLoaded by rememberPageData("academic.exams.loaded") { false }
-    var examLoading by remember(account) { mutableStateOf(false) }
-    var examError by remember(account) { mutableStateOf("") }
-    var examRevision by remember(account) { mutableIntStateOf(0) }
-    val semesters = remember(report) { AcademicStudyBridge.semesters(report.grades).ifEmpty { listOf(AcademicStudyReader.calendarTerm().id) } }
+    LaunchedEffect(supportedTabs) { if (tab !in supportedTabs && supportedTabs.isNotEmpty()) tab = supportedTabs.first() }
+    val cache = "academic.grades:$account:$provider"
+    var report by rememberPageData("$cache:overall") { AcademicGradeReport(emptyList()) }
+    var reportLoaded by rememberPageData("$cache:overall.loaded") { false }
+    var catalog by rememberPageData<AcademicStudyCatalog?>("$cache:terms") { null }
+    var termReports by rememberPageData<Map<String, AcademicGradeReport>>("$cache:reports") { emptyMap() }
+    var semester by rememberSaveable { mutableStateOf("") }
+    var loading by remember { mutableStateOf(true) }
+    var overallLoading by remember { mutableStateOf(false) }
+    var error by remember { mutableStateOf("") }
+    var overallError by remember { mutableStateOf("") }
+    var catalogError by remember { mutableStateOf("") }
+    var catalogLoading by remember { mutableStateOf(false) }
+    var revision by remember { mutableIntStateOf(0) }
+    var overallRevision by remember { mutableIntStateOf(0) }
+    var termRevision by remember { mutableIntStateOf(0) }
+    var exams by rememberPageData<List<ExamItemUi>>("$cache:exams") { emptyList() }
+    var examsLoaded by rememberPageData("$cache:exams.loaded") { false }
+    var examLoading by remember { mutableStateOf(false) }
+    var examError by remember { mutableStateOf("") }
+    var examRevision by remember { mutableIntStateOf(0) }
+    val terms = remember(catalog, report, termReports) { gradeSemesters(catalog, report.grades + termReports.values.flatMap { it.grades }) }
+    fun loadError(e: Exception): String {
+        if ((e as? AcademicException)?.status == AcademicStatus.SESSION_EXPIRED)
+            com.tyust.course.network.CourseApiClient.getInstance().notifyCookieExpired(expectedSession)
+        return e.message ?: "加载失败，请重试"
+    }
     fun gradeUi(grade: AcademicGrade): GradeItemUi = AcademicStudyBridge.grade(grade).copy(onDetailRequest =
         if (grade.id.isNotBlank() && grade.detail.isBlank() && com.tyust.course.academic.plugin.AcademicProviderRegistry.overrides(school, "study.gradeDetails")) ({
-            if (detailRequests.add(grade.id)) detailScope.launch {
+            val detailKey = grade.term + ":" + grade.id
+            if (detailRequests.add(detailKey)) detailScope.launch {
                 try {
                     val details = withContext(Dispatchers.IO) { AcademicStudyBridge.reader(school, account, expectedSession).gradeDetails(grade) }
-                    if (sessions.isCurrent(expectedSession)) report = report.copy(grades = report.grades.map { if (it.id == grade.id) it.copy(detail = details) else it })
+                    if (sessions.isCurrent(expectedSession)) {
+                        fun update(source: AcademicGradeReport) = source.copy(grades = source.grades.map {
+                            if (it.id == grade.id && it.term == grade.term) it.copy(detail = details) else it
+                        })
+                        report = update(report)
+                        termReports = termReports.mapValues { update(it.value) }
+                    }
                 } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { detailRequests.remove(grade.id); if (sessions.isCurrent(expectedSession)) GlassToaster.show(e.message ?: "成绩明细加载失败") }
+                catch (e: Exception) { if (sessions.isCurrent(expectedSession)) GlassToaster.show(loadError(e)) }
+                finally { detailRequests.remove(detailKey) }
             }
             Unit
         }) else null)
-    val semesterGrades = report.grades.filter { it.term == semester }.map(::gradeUi)
-    val overallGrades = report.grades.map(::gradeUi)
-    val overallStats = remember(report) { AcademicStudyBridge.stats(report) }
 
-    LaunchedEffect(account, revision, session.token) {
-        if (0 !in supportedTabs) { loading = false; error = "该学校尚未适配成绩查询"; return@LaunchedEffect }
-        val expected = expectedSession
-        if (revision == 0 && reportLoaded) { loading = false; return@LaunchedEffect }
+    // Catalog and overall results are independent: a failed catalog cannot discard grades.
+    LaunchedEffect(revision, session.token) {
+        if (0 !in supportedTabs) { loading = false; return@LaunchedEffect }
+        if (catalog != null && revision == 0) return@LaunchedEffect
+        catalogError = ""; catalogLoading = true
+        try {
+            if (com.tyust.course.academic.plugin.AcademicProviderRegistry.hasCapability(school, "study.terms")) {
+                val loaded = withContext(Dispatchers.IO) { AcademicStudyBridge.reader(school, account, expectedSession).catalog() }
+                if (sessions.isCurrent(expectedSession)) catalog = loaded
+            }
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { if (sessions.isCurrent(expectedSession)) catalogError = loadError(e) }
+        finally { if (sessions.isCurrent(expectedSession) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) catalogLoading = false }
+    }
+    LaunchedEffect(overallRevision, session.token) {
+        if (0 !in supportedTabs || (reportLoaded && overallRevision == 0)) return@LaunchedEffect
+        overallLoading = true; overallError = ""
+        try {
+            val loaded = withContext(Dispatchers.IO) { AcademicStudyBridge.reader(school, account, expectedSession).grades() }
+            if (sessions.isCurrent(expectedSession)) { report = loaded; reportLoaded = true }
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { if (sessions.isCurrent(expectedSession)) overallError = loadError(e) }
+        finally { if (sessions.isCurrent(expectedSession)) overallLoading = false }
+    }
+    LaunchedEffect(terms, catalog?.currentTerm?.id) {
+        if (semester.isBlank() || terms.none { it.id == semester })
+            semester = catalog?.currentTerm?.id?.takeIf { id -> terms.any { it.id == id } } ?: terms.firstOrNull()?.id.orEmpty()
+    }
+    LaunchedEffect(semester, termRevision, session.token) {
+        if (semester.isBlank() || 0 !in supportedTabs) { loading = false; return@LaunchedEffect }
+        val requested = semester
+        if (termReports.containsKey(requested)) { loading = false; return@LaunchedEffect }
         loading = true; error = ""
         try {
-            val loaded = withContext(Dispatchers.IO) { AcademicStudyBridge.reader(school, account, expected).grades() }
-            if (!sessions.isCurrent(expected)) return@LaunchedEffect
-            report = loaded
-            reportLoaded = true
-            val available = AcademicStudyBridge.semesters(loaded.grades)
-            if (semester.isBlank() || semester !in available) semester = available.firstOrNull() ?: AcademicStudyReader.calendarTerm().id
+            val term = terms.firstOrNull { it.id == requested } ?: AcademicTerm(requested)
+            val loaded = withContext(Dispatchers.IO) { AcademicStudyBridge.reader(school, account, expectedSession).grades(term).forSemester(requested) }
+            if (sessions.isCurrent(expectedSession)) termReports = termReports + (requested to loaded)
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) {
-            if (!sessions.isCurrent(expected)) return@LaunchedEffect
-            error = e.message ?: "成绩加载失败，请重试"
-            if ((e as? AcademicException)?.status == AcademicStatus.SESSION_EXPIRED)
-                com.tyust.course.network.CourseApiClient.getInstance().notifyCookieExpired(expected)
-        }
-        finally { if (sessions.isCurrent(expected) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) loading = false }
+        catch (e: Exception) { if (sessions.isCurrent(expectedSession)) error = loadError(e) }
+        finally { if (sessions.isCurrent(expectedSession) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) loading = false }
     }
-    LaunchedEffect(account, tab, examRevision, session.token) {
-        val expected = expectedSession
+    LaunchedEffect(tab, examRevision, session.token) {
         if (tab != 2 || examsLoaded || 2 !in supportedTabs) return@LaunchedEffect
         examLoading = true; examError = ""
         try {
             val loaded = withContext(Dispatchers.IO) {
-                val reader = AcademicStudyBridge.reader(school, account, expected)
-                reader.exams(reader.catalog().currentTerm).map(AcademicStudyBridge::exam)
+                val reader = AcademicStudyBridge.reader(school, account, expectedSession)
+                reader.exams((catalog ?: reader.catalog()).currentTerm).map(AcademicStudyBridge::exam)
             }
-            if (!sessions.isCurrent(expected)) return@LaunchedEffect
-            exams = loaded; examsLoaded = true
+            if (sessions.isCurrent(expectedSession)) { exams = loaded; examsLoaded = true }
         } catch (e: CancellationException) { throw e }
-        catch (e: Exception) {
-            if (!sessions.isCurrent(expected)) return@LaunchedEffect
-            examError = e.message ?: "考试安排加载失败，请重试"
-            if ((e as? AcademicException)?.status == AcademicStatus.SESSION_EXPIRED)
-                com.tyust.course.network.CourseApiClient.getInstance().notifyCookieExpired(expected)
-        }
-        finally { if (sessions.isCurrent(expected) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) examLoading = false }
+        catch (e: Exception) { if (sessions.isCurrent(expectedSession)) examError = loadError(e) }
+        finally { if (sessions.isCurrent(expectedSession) && coroutineContext[kotlinx.coroutines.Job]?.isActive == true) examLoading = false }
     }
-    com.tyust.course.ui.system.ReportPageContent(report.grades.isNotEmpty() || exams.isNotEmpty())
+    val currentReport = termReports[semester]
+    val semesterGrades = remember(currentReport, session.token) { currentReport?.grades.orEmpty().map(::gradeUi) }
+    val overallGrades = remember(report, session.token) { report.grades.map(::gradeUi) }
+    val semesterIds = remember(terms) { terms.map { it.id } }
+    val semesterLabels = remember(terms) { terms.associate { it.id to it.name } }
+    val overallStats by produceState(
+        initialValue = com.tyust.course.ui.screen.OverallStatsUi("--", "--", 0, 0, 0, 0, 0), report
+    ) { value = withContext(Dispatchers.Default) { AcademicStudyBridge.stats(report) } }
+    com.tyust.course.ui.system.ReportPageContent(report.grades.isNotEmpty() || semesterGrades.isNotEmpty() || exams.isNotEmpty())
     GradesScreen(currentTab = tab, onTabChange = { tab = it },
-        semesterGrades = semesterGrades,
-        semesters = semesters, currentSemester = semester, onSemesterChange = { semester = it },
-        semesterIsLoading = loading, overallGrades = overallGrades,
-        overallStats = overallStats, overallIsLoading = loading,
+        semesterGrades = semesterGrades, semesters = semesterIds, semesterLabels = semesterLabels,
+        currentSemester = semester, onSemesterChange = { semester = it; error = "" },
+        semesterIsLoading = loading || (terms.isEmpty() && overallLoading), overallGrades = overallGrades,
+        overallStats = overallStats, overallIsLoading = overallLoading,
         examList = exams, examIsLoading = examLoading,
-        onRefresh = { if (tab == 2) { examsLoaded = false; examRevision++ } else revision++ },
-        semesterError = error, overallError = error, examError = examError,
-        onExportGrades = { exportAcademicGrades(context, it) }, supportedTabs = supportedTabs)
+        onRefresh = { when (tab) { 2 -> { examsLoaded = false; examRevision++ }; 1 -> overallRevision++; else -> { termReports = termReports - semester; revision++; termRevision++ } } },
+        semesterError = error.ifBlank { if (terms.isEmpty()) catalogError.ifBlank { overallError } else "" },
+        overallError = overallError, examError = examError,
+        onExportGrades = { exportAcademicGrades(context, it) }, supportedTabs = supportedTabs,
+        semestersLoading = catalogLoading, semestersError = catalogError,
+        onRefreshSemesters = {
+            revision++
+            if (!com.tyust.course.academic.plugin.AcademicProviderRegistry.hasCapability(school, "study.terms")) overallRevision++
+        })
 }
 
 private fun exportAcademicGrades(context: Context, grades: List<GradeItemUi>) {

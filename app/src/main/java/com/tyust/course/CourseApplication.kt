@@ -9,8 +9,7 @@ class CourseApplication : Application() {
     private var mainProcess = false
     override fun onCreate() {
         super.onCreate()
-        // Keep the UID guard for isolated instrumentation. The plugin service uses
-        // a normal private process; only the main process below initializes app data.
+        // Isolated plugin UIDs must never initialize application storage or providers.
         if (android.os.Process.myUid() != applicationInfo.uid) return
         val processName = if (android.os.Build.VERSION.SDK_INT >= 28) getProcessName() else {
             runCatching { java.io.File("/proc/self/cmdline").inputStream().use {

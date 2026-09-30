@@ -20,7 +20,7 @@ class PluginSandboxDeviceTest {
     private val sessions = AcademicSessionStore()
     private fun operation(method: String = "study.terms", manifest: JSONObject = JSONObject().put("network", org.json.JSONArray())) = PluginOperation(
         sessions.session("test-school", "test-account", "https://school.test"),
-        PluginManifest(manifest.put("id", "test.school").put("kind", "independent").put("version", "1.0.0")), method, development = true)
+        PluginManifest(manifest.put("apiVersion", 3).put("id", "test.school").put("kind", "independent").put("version", "1.0.0")), method, development = true)
     private suspend fun run(source: String, op: PluginOperation = operation()) = PluginSandboxClient(context).execute(source, JSONObject(), op, PluginHost(op, context.cacheDir))
     @Test fun runsSharedHtmlAndPassesLargeResponsesOutsideBinder() = runBlocking {
         val result = run("""globalThis.plugin={study:{terms:async(a,c,s)=>({ok:true,data:{text:s.html.text('<b>A &amp; B</b>'),large:'x'.repeat(2*1024*1024),android:typeof Java,network:typeof fetch}})}};""")
@@ -82,6 +82,46 @@ class PluginSandboxDeviceTest {
             assertEquals(2, server.requestCount)
         }
     }
+    @Test fun authenticationCanInspectALargeSchoolPageRepeatedly() = runBlocking {
+        val html = "<html><body><form><input name='xh' value='synthetic-student'>" +
+            (1..1500).joinToString("") { "<div class='entry'><span>课程菜单 $it</span><a href='/menu/$it'>查看</a></div>" } +
+            "<input name='xm' value='测试学生'></form></body></html>"
+        val source = """globalThis.plugin={auth:{start:async(a,c,s)=>{
+            let names=[];
+            for(let i=0;i<12;i++) names=s.html.select(a.html,'input[name=xh],input[name=xm]').map(n=>n.attributes.value);
+            return {ok:true,data:{names}};
+        }}};"""
+        val op = operation("auth.start")
+        val result = PluginSandboxClient(context).execute(source, JSONObject().put("html", html), op, PluginHost(op, context.cacheDir))
+        assertEquals("synthetic-student", result.getJSONObject("data").getJSONArray("names").getString(0))
+    }
+    @Test fun slowAuthenticationComputationIsNotCutOffByTheQueryBudget() = runBlocking {
+        val source = """globalThis.plugin={auth:{start:async()=>{
+            const until=Date.now()+5500; while(Date.now()<until){}
+            return {ok:true,data:{status:'authenticated'}};
+        }}};"""
+        assertEquals("authenticated", run(source, operation("auth.start")).getJSONObject("data").getString("status"))
+    }
+    @Test fun interruptedInvocationReportsTimeoutInsteadOfAnInternalJavascriptError() = runBlocking {
+        try {
+            run("globalThis.plugin={study:{terms:async()=>{while(true){}}}};")
+            fail("unbounded computation was accepted")
+        } catch (e: PluginException) {
+            assertEquals(PluginErrorCode.TIMEOUT, e.code)
+            assertFalse("raw interpreter error escaped", e.message.orEmpty().contains("interrupt", true))
+        }
+    }
+    @Test fun authenticationStillHasAFiniteComputationLimit() = runBlocking {
+        val started = android.os.SystemClock.elapsedRealtime()
+        try {
+            run("globalThis.plugin={auth:{start:async()=>{while(true){}}}};", operation("auth.start"))
+            fail("unbounded authentication was accepted")
+        } catch (e: PluginException) {
+            assertEquals(PluginErrorCode.TIMEOUT, e.code)
+            assertEquals("登录处理超时，请重试或使用网页登录", e.message)
+        }
+        assertTrue(android.os.SystemClock.elapsedRealtime() - started < 25000)
+    }
     @androidx.test.filters.SdkSuppress(minSdkVersion = 26)
     @Test fun processExitInvalidatesQueryAndNeverReplaysSentMutation() = runBlocking {
         val device = androidx.test.uiautomator.UiDevice.getInstance(androidx.test.platform.app.InstrumentationRegistry.getInstrumentation())
@@ -92,7 +132,7 @@ class PluginSandboxDeviceTest {
                 val origin = server.url("/").toString().trimEnd('/')
                 val purpose = if (mutation) "mutation" else "query"
                 val method = if (mutation) "selection.select" else "study.terms"
-                val manifest = PluginManifest(JSONObject("""{"id":"test.exit","kind":"independent","version":"1.0.0","network":[{"origin":"$origin","pathPrefix":"/wait","methods":["GET"],"purposes":["$purpose"]}]}"""))
+                val manifest = PluginManifest(JSONObject("""{"apiVersion":3,"id":"test.exit","kind":"independent","version":"1.0.0","network":[{"origin":"$origin","pathPrefix":"/wait","methods":["GET"],"purposes":["$purpose"]}]}"""))
                 val op = PluginOperation(sessions.session("test-exit", "test", origin), manifest, method, development = true, confirmed = mutation)
                 val source = """globalThis.plugin={${method.substringBefore('.') }:{${method.substringAfter('.')}:async(a,c,s)=>({ok:true,data:await s.http({url:'$origin/wait',purpose:'$purpose'})})}};"""
                 val task = async(Dispatchers.IO) { runCatching { run(source, op) } }

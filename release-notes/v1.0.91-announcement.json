@@ -1,0 +1,11 @@
+{
+  "id": "20260928_v1_0_91_release",
+  "title": "v1.0.91：同校插件登录共享与原生插件修复",
+  "content": "## 原生插件恢复正常调用\n\n修复原生插件一打开就提示“调用已取消”的问题，恢复页面、按钮、后台任务、数据查询和命令的调用链。\n\n## 同校插件共用教务登录\n\n在你授权后，不同作者的同校插件可以复用教务登录响应中的 X-Token。新旧正方、新旧强智、金智、乘方以及正方兼容入口均支持相关适配声明，使用 Cookie 的学校继续兼容原有方式。\n\n升级后请重新登录一次。授权可以撤销；切换学校、账号或适配版本后需要重新授权，失效令牌不能继续使用。具体学校仍需适配器按真实接口声明，不代表所有学校已经完成实测。\n\n## 教务流程和显示修复\n\n完善选课能力判断、手动队列、成绩学期切换、专用单点登录与会话恢复，调整临时教务缓存和登录处理时限。修复壁纸下玻璃控件可读性、导航切换显示及课表日期对齐。\n\nSDK 更新至 3.2.2，开发网站和独立下载包同步提供共享令牌文档与示例。\n\n[插件商店](https://plugins.hidisiwa.xyz) · [开发文档与 SDK](https://plugins.hidisiwa.xyz/developers) · [同校令牌共享指南](https://plugins.hidisiwa.xyz/docs/architecture-v3/SHARED-ACADEMIC-TOKEN.md)",
+  "type": "info",
+  "audience": "app",
+  "contentType": "markdown",
+  "showOnce": true,
+  "created_at": "2026-09-28T15:10:00Z",
+  "created_by": "admin"
+}

@@ -1,5 +1,7 @@
 package com.tyust.course.academic.plugin
 
+import kotlinx.coroutines.flow.asStateFlow
+
 import android.content.Context
 import com.tyust.course.academic.*
 import com.tyust.course.model.SchoolConfig
@@ -8,6 +10,17 @@ import java.util.concurrent.ConcurrentHashMap
 
 /** Installed packages are resolved once per adapter, so running tasks retain their exact source/version. */
 object AcademicProviderRegistry {
+    private val providerChanges = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    val revision = providerChanges.asStateFlow()
+    private fun providersChanged() { providerChanges.value++; PluginPages.refresh() }
+
+    fun operationProvider(school: SchoolConfig, operation: String): PluginPackage? = runCatching {
+        val pkg = resolve(school) ?: return@runCatching null
+        if (operation in pkg.manifest.capabilities) pkg
+        else BuiltinAcademicInheritance.providers[pkg.manifest.baseProvider]?.let(::protocolPackage)
+            ?.takeIf { operation in it.manifest.capabilities }
+    }.getOrNull()
+
     private var app: Context? = null
     private var store: PluginPackageStore? = null
     const val OFFICIAL_WEBSITE = "https://plugins.hidisiwa.xyz"
@@ -63,23 +76,23 @@ object AcademicProviderRegistry {
     private fun schoolKey(school: SchoolConfig) = PluginJson.sha256(PluginSchoolMatcher.key(school).toByteArray())
     fun isEnabled(id: String, school: SchoolConfig) = isEnabled(id) && schoolPrefs()?.getBoolean("disabled:${schoolKey(school)}:$id", false) != true
     fun setSchoolEnabled(id: String, school: SchoolConfig, enabled: Boolean) {
-        if (!enabled) app?.let { PluginAcademicSession.revoke(it, id) }
+        if (!enabled) app?.let { PluginAcademicSession.revoke(it, id); PluginDataGuard.revoke(it, id) }
         schoolPrefs()?.edit()?.putBoolean("disabled:${schoolKey(school)}:$id", !enabled)?.apply()
-        PluginPages.refresh()
+        providersChanged()
     }
-    @Synchronized fun choose(school: SchoolConfig, id: String?) { schoolPrefs()?.edit()?.apply { if (id == null) remove("provider:${schoolKey(school)}") else putString("provider:${schoolKey(school)}", id) }?.apply() }
+    @Synchronized fun choose(school: SchoolConfig, id: String?) { schoolPrefs()?.edit()?.apply { if (id == null) remove("provider:${schoolKey(school)}") else putString("provider:${schoolKey(school)}", id) }?.apply(); providersChanged() }
     fun manualChoice(school: SchoolConfig): String = schoolPrefs()?.getString("provider:${schoolKey(school)}", null) ?: school.academicProvider.orEmpty()
     fun candidates(school: SchoolConfig): List<PluginPackage> = installed.values.filter { it.manifest.isAcademic && it.official && isEnabled(it.manifest.id, school) && matches(it, school) }.sortedBy { it.manifest.id }
     fun contributions(school: SchoolConfig, kind: String): List<Pair<PluginPackage, JSONObject>> = services(school).filter { it.manifest.isNative }.flatMap { pkg -> pkg.manifest.contributes.optJSONArray(kind)?.let(PluginJson::objects).orEmpty().map { pkg to it } }
     fun isEnabled(id: String): Boolean = (store?.activeDigest(id) != null || id in bundled) && schoolPrefs()?.getBoolean("disabled:global:$id", false) != true
     fun setEnabled(id: String, enabled: Boolean) {
-        if (!enabled) app?.let { PluginAcademicSession.revoke(it, id) }
+        if (!enabled) app?.let { PluginAcademicSession.revoke(it, id); PluginDataGuard.revoke(it, id) }
         schoolPrefs()?.edit()?.putBoolean("disabled:global:$id", !enabled)?.commit()
         if (!enabled) app?.let { NativePluginTasks.stopPlugin(it, id) }
-        PluginPages.refresh()
+        providersChanged()
     }
     fun isCurrentPackage(id: String, digest: String): Boolean = (store?.activeDigest(id) ?: bundled[id]?.digest) == digest
-    fun reload() { installed = store?.list().orEmpty().associateBy { it.manifest.id }; PluginPages.refresh() }
+    fun reload() { installed = store?.list().orEmpty().associateBy { it.manifest.id }; providersChanged() }
     fun resolve(school: SchoolConfig): PluginPackage? {
         val explicit = manualChoice(school)
         if (explicit.startsWith("builtin.")) return builtin(school, explicit.removePrefix("builtin."))
@@ -94,11 +107,11 @@ object AcademicProviderRegistry {
     }
     private fun protocolPackage(id: String): PluginPackage? = installed[id]?.takeIf { it.official && isEnabled(id) } ?: bundled[id]?.takeIf { isEnabled(id) }
     private fun builtin(school: SchoolConfig, choice: String = school.academicSystem): PluginPackage? {
-        BundledAcademicProviders.matching(school, choice)?.let { return protocolPackage(it.id) }
+        BundledAcademicProviders.matching(school, choice)?.let { return protocolPackage(it.id)?.takeIf { pkg -> isEnabled(pkg.manifest.id, school) } }
         val selected = if (choice == "auto") school.academicSystem else choice
         // Explicitly changing a specialized vendor to another built-in cannot silently select an unrelated school.
         if (school.academicSystem in setOf("jinzhi", "chengfang") && selected != school.academicSystem) return null
-        return GenericAcademicProtocols.providers[selected]?.let { id -> protocolPackage(id)?.let { GenericAcademicProtocols.bind(it, school) } }
+        return GenericAcademicProtocols.providers[selected]?.let { id -> protocolPackage(id)?.takeIf { isEnabled(it.manifest.id, school) }?.let { GenericAcademicProtocols.bind(it, school) } }
     }
     fun prepareBuiltinSchool(school: SchoolConfig) {
         val pkg = resolve(school)?.takeIf { it.bundled && it.manifest.id !in GenericAcademicProtocols.providers.values } ?: return
@@ -132,6 +145,12 @@ object AcademicProviderRegistry {
     fun adapter(school: SchoolConfig, session: AcademicSession): PluginAcademicAdapter? {
         val pkg = resolve(school) ?: return null
         return adapterFor(pkg, school, session)
+    }
+    internal fun authenticationPackage(school: SchoolConfig): PluginPackage? {
+        val pkg = resolve(school) ?: return null
+        if ("auth.start" in pkg.manifest.capabilities) return pkg
+        val id = BuiltinAcademicInheritance.providers[pkg.manifest.baseProvider] ?: return null
+        return protocolPackage(id)?.let { BuiltinAcademicInheritance.inherit(pkg, it, school) }
     }
     fun adapterFor(pkg: PluginPackage, school: SchoolConfig, session: AcademicSession): PluginAcademicAdapter {
         val baseSchool = pkg.manifest.baseProvider?.let { provider -> SchoolConfig.fromJson(school.toJson()).apply {

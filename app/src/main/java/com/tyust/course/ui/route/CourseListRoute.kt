@@ -1,5 +1,7 @@
 package com.tyust.course.ui.route
 
+import com.tyust.course.ui.system.wallpaperRegion
+
 import com.tyust.course.ui.theme.moduleEntrance
 
 import com.tyust.course.ui.system.GlassToaster
@@ -1299,11 +1301,14 @@ fun CourseListRoute() {
     // 只剩 26dp 左边距。窄屏收窄它，左右留白才回到一个能读的比例
     //（真正的居中要求控件 ≤ 108dp，那就太小了）。
     val topBarSegmentWidth = com.tyust.course.ui.system.TopBarLayoutMetrics.segmentWidth()
-    val topBarTint = if (com.tyust.course.ui.system.rememberGlassDarkTheme()) MaterialTheme.colorScheme.surface.copy(alpha = 0.9f) else White.copy(alpha = 0.60f)
+    val topBarRegion = com.tyust.course.ui.system.rememberWallpaperRegionState()
+    val topBarAppearance = com.tyust.course.ui.system.rememberWallpaperRegionAppearance(topBarRegion)
+    val topBarTint = topBarAppearance.surface
     com.tyust.course.ui.theme.ReportStatusBarSurface(topBarTint)
     Scaffold(
         containerColor = Color.Transparent,
         topBar = {
+            com.tyust.course.ui.system.ProvideWallpaperAppearance(topBarAppearance) {
             // 三态顶栏：玻璃外壳（不支持时回退实色）
             val topBarShellModifier = if (topBarUseGlass && topBarBackdrop != null) {
                 Modifier
@@ -1331,7 +1336,7 @@ fun CourseListRoute() {
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface)
             }
-            Column(modifier = Modifier.moduleEntrance(0).reportNoticeAnchor()) {
+            Column(modifier = Modifier.moduleEntrance(0).reportNoticeAnchor().wallpaperRegion(topBarRegion)) {
             Box(modifier = topBarShellModifier) {
                 Column(
                     modifier = Modifier.fillMaxWidth()
@@ -1368,7 +1373,7 @@ fun CourseListRoute() {
                                     isSearchActive = false
                                     onSearch("")
                                 }) { 
-                                    Icon(Icons.Default.Close, contentDescription = "取消搜索", tint = MaterialTheme.colorScheme.onSurface)
+                                    Icon(Icons.Default.Close, contentDescription = "取消搜索", tint = topBarAppearance.onSurface)
                                 }
                                 com.tyust.course.ui.system.GlassTextField(
                                     value = searchQuery,
@@ -1383,10 +1388,10 @@ fun CourseListRoute() {
                         "multiSelect" -> {
                             //  Sélection 模式顶栏
                             TopAppBar(
-                                title = { Text("已选 ${selectedClassIds.size} 门课程", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurface) },
+                                title = { Text("已选 ${selectedClassIds.size} 门课程", style = MaterialTheme.typography.titleMedium, color = topBarAppearance.onSurface) },
                                 navigationIcon = {
                                     IconButton(onClick = { exitMultiSelectMode() }) {
-                                        Icon(Icons.Default.Close, contentDescription = "取消", tint = MaterialTheme.colorScheme.onSurface)
+                                        Icon(Icons.Default.Close, contentDescription = "取消", tint = topBarAppearance.onSurface)
                                     }
                                 },
                                 actions = {
@@ -1403,8 +1408,8 @@ fun CourseListRoute() {
                                 },
                                 colors = TopAppBarDefaults.topAppBarColors(
                                     containerColor = Color.Transparent,
-                                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                                    navigationIconContentColor = MaterialTheme.colorScheme.onSurface
+                                    titleContentColor = topBarAppearance.onSurface,
+                                    navigationIconContentColor = topBarAppearance.onSurface
                                 )
                             )
                         }
@@ -1493,6 +1498,7 @@ fun CourseListRoute() {
                     com.tyust.course.ui.system.SystemDivider(alpha = 0.6f)
                 }
                 }
+            }
             }
             }
         }

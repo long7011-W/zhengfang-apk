@@ -1,5 +1,7 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.system.WallpaperCaption
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.slideInVertically
@@ -188,22 +190,14 @@ fun LoginScreen(
                     
                     Spacer(modifier = Modifier.height(24.dp))
                     
-                    Text(
+                    WallpaperCaption(
                         text = androidx.compose.ui.res.stringResource(com.tyust.course.R.string.app_name),
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontWeight = FontWeight.ExtraBold,
-                        letterSpacing = 0.sp
+                        style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.ExtraBold, letterSpacing = 0.sp)
                     )
                     
                     Spacer(modifier = Modifier.height(4.dp))
                     
-                    Text(
-                        text = "课表、成绩与选课",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Medium
-                    )
+                    WallpaperCaption("课表、成绩与选课", style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium))
                 }
             }
             
@@ -261,7 +255,7 @@ fun LoginScreen(
                             text = "选择学校",
                             style = MaterialTheme.typography.labelMedium,
                             fontWeight = FontWeight.SemiBold,
-                            color = Neutral700,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.align(Alignment.Start)
                         )
                         
@@ -365,7 +359,7 @@ fun LoginScreen(
                                 text = "账号密码",
                                 style = MaterialTheme.typography.labelMedium,
                                 fontWeight = FontWeight.SemiBold,
-                                color = Neutral700,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.align(Alignment.Start)
                             )
                             Spacer(modifier = Modifier.height(8.dp))

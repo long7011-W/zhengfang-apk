@@ -49,6 +49,8 @@ internal fun MeasuredGradesHeader(
     onHeights: (Dp, Dp) -> Unit
 ) {
     val density = LocalDensity.current
+    val wallpaperRegion = rememberWallpaperRegionState()
+    val appearance = rememberWallpaperRegionAppearance(wallpaperRegion)
     val reduced = rememberGlassAccessibilityMode().reduceMotion
     val p = collapse.coerceIn(0f, 1f)
     val share by animateFloatAsState(if (showShare) 1f else 0f,
@@ -65,7 +67,8 @@ internal fun MeasuredGradesHeader(
         maxOf(with(density) { 48.dp.toPx() }.roundToInt(), measurer.measure(label, tabStyle).size.width + with(density) { 24.dp.roundToPx() })
     }
 
-    Box(Modifier.fillMaxWidth().glassLensAnchor(anchor).then(wallpaperHeaderScrim())) {
+    ProvideWallpaperAppearance(appearance) {
+    Box(Modifier.fillMaxWidth().wallpaperRegion(wallpaperRegion).glassLensAnchor(anchor).then(wallpaperHeaderScrim())) {
         if (backdrop != null) Box(Modifier.matchParentSize().layerBackdrop(layer)) {
             StatusBarFrost(statusBar + 1.dp, p, backdrop)
             HeaderGlassSlab(((p - 0.35f) / 0.65f).coerceIn(0f, 1f), backdrop, 26.dp,
@@ -75,10 +78,10 @@ internal fun MeasuredGradesHeader(
             Layout(modifier = Modifier.fillMaxWidth().testTag("grades-header"), content = {
                 Column(Modifier.testTag("grades-title").semantics { if (p > 0.95f) hideFromAccessibility() }) {
                     Text("成绩与考试", fontSize = 28.sp, lineHeight = 36.sp, fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 2)
+                        letterSpacing = 0.sp, color = appearance.onSurface, maxLines = 2)
                     Spacer(Modifier.height(3.dp))
                     Text(subtitle, style = MaterialTheme.typography.labelMedium, lineHeight = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                        color = appearance.onSurfaceVariant, maxLines = 2)
                 }
                 LiquidSegmentedControl(tabs, selected, onSelect,
                     modifier = Modifier.testTag("grades-segments"), height = 52.dp - 4.dp * p)
@@ -91,7 +94,7 @@ internal fun MeasuredGradesHeader(
                     }
                 }
                 Text("成绩与考试", fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    color = appearance.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.semantics { if (p < 0.95f) hideFromAccessibility() })
             }) { children, constraints ->
                 val inset = PagePadding.roundToPx()
@@ -133,4 +136,6 @@ internal fun MeasuredGradesHeader(
             }
         }
     }
+}
+
 }

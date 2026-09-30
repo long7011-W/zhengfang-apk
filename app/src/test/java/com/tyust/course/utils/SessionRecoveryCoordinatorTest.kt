@@ -117,4 +117,14 @@ class SessionRecoveryCoordinatorTest {
         f.clock = 60_001
         assertTrue(f.coordinator.canAttempt(f.sessions.token))
     }
+
+    @Test fun cookieRefreshPreservesTheLoginFailureWithoutReplacingItWithANetworkError() {
+        val f = Fixture()
+        val results = mutableListOf<SessionRecoveryResult>()
+        f.coordinator.request(f.sessions.token, manual = true, onDone = results::add)
+        f.requests.single()(LoginRecoveryOutcome.Failure(RecoveryFailure.Login, "登录处理超时，请重试或使用网页登录"))
+        assertEquals(SessionRecoveryResult.NeedsLogin(RecoveryFailure.Login, "登录处理超时，请重试或使用网页登录"), results.single())
+        assertEquals("original", f.cookie)
+        assertEquals(RecoveryFailure.Login, f.coordinator.state.value.reason)
+    }
 }

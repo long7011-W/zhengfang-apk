@@ -16,6 +16,7 @@ object PluginPlatformContract {
     fun validate(manifest: PluginManifest) {
         val m = manifest.json
         unique(m.optJSONArray("requires"), "name")
+        PluginAcademicTokenRule.validate(manifest)
         if (manifest.network.any { it.has("authHeader") } &&
             (manifest.apiVersion != 3 || manifest.network.any { it.has("authHeader") && it.optString("authHeader") != "X-Token" } ||
                 m.optJSONArray("requires")?.let(PluginJson::objects).orEmpty().none { it.optString("name") == "network.request" && it.optInt("version") >= 3 }))
