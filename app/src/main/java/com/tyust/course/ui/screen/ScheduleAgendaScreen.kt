@@ -47,6 +47,8 @@ fun ScheduleScreen(
     onToggleSemester: () -> Unit = {},
     errorMessage: String = "",
     onRetry: () -> Unit = {},
+    isRefreshing: Boolean = false,
+    onRefresh: () -> Unit = {},
     firstWeekDate: String? = null,
     weekRequestKey: String? = null,
     displayPreferences: ScheduleDisplayPreferences = ScheduleDisplayPreferences(),
@@ -141,24 +143,27 @@ fun ScheduleScreen(
             errorMessage.isNotBlank() && courses.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
                 ScheduleNotice(errorMessage, "重新同步", onRetry)
             }
-            else -> Box(Modifier.fillMaxSize().then(
-                if (contentBackdrop != null) Modifier.layerBackdrop(contentBackdrop) else Modifier)) {
-                androidx.compose.animation.AnimatedContent(dayView, modifier = Modifier.fillMaxSize(),
-                    transitionSpec = {
-                        if (reduced) (androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None)
-                        else ((androidx.compose.animation.fadeIn(tween(com.tyust.course.ui.theme.MotionDuration.Medium)) +
-                            androidx.compose.animation.slideInVertically(tween(com.tyust.course.ui.theme.MotionDuration.Medium)) { if (targetState) it / 40 else -it / 40 }) togetherWith
-                            (androidx.compose.animation.fadeOut(tween(com.tyust.course.ui.theme.MotionDuration.Fast)) +
-                                androidx.compose.animation.slideOutVertically(tween(com.tyust.course.ui.theme.MotionDuration.Medium)) { if (targetState) -it / 40 else it / 40 }))
-                            .using(null)
-                    }, label = "schedule-view") { mode ->
-                    SchedulePages(mode, mode == dayView, currentWeek, selectedDay,
-                        "$weekRequestKey|$dateRequest", firstWeekDate, actualWeek, isNextSemester,
-                        courses, periodTimes, periodCount, displayPreferences, agenda, clock, topInset,
-                        pageScrolls, restoredScrolls, if (mode) dayOffset else weekOffset, reduced,
-                        onWeekChange, onDayChange, onCourseClick, onCourseLongClick, onSettingsClick,
-                        onShown = { week, day, scroll -> shownWeek = week; shownDay = day; activeScroll = scroll },
-                        onScroll = { if (mode) dayOffset = it else weekOffset = it })
+            else -> GlassPullRefreshBox(isRefreshing = isRefreshing, onRefresh = onRefresh,
+                modifier = Modifier.fillMaxSize(), indicatorTopPadding = topInset + 10.dp) {
+                Box(Modifier.fillMaxSize().then(
+                    if (contentBackdrop != null) Modifier.layerBackdrop(contentBackdrop) else Modifier)) {
+                    androidx.compose.animation.AnimatedContent(dayView, modifier = Modifier.fillMaxSize(),
+                        transitionSpec = {
+                            if (reduced) (androidx.compose.animation.EnterTransition.None togetherWith androidx.compose.animation.ExitTransition.None)
+                            else ((androidx.compose.animation.fadeIn(tween(com.tyust.course.ui.theme.MotionDuration.Medium)) +
+                                androidx.compose.animation.slideInVertically(tween(com.tyust.course.ui.theme.MotionDuration.Medium)) { if (targetState) it / 40 else -it / 40 }) togetherWith
+                                (androidx.compose.animation.fadeOut(tween(com.tyust.course.ui.theme.MotionDuration.Fast)) +
+                                    androidx.compose.animation.slideOutVertically(tween(com.tyust.course.ui.theme.MotionDuration.Medium)) { if (targetState) -it / 40 else it / 40 }))
+                                .using(null)
+                        }, label = "schedule-view") { mode ->
+                        SchedulePages(mode, mode == dayView, currentWeek, selectedDay,
+                            "$weekRequestKey|$dateRequest", firstWeekDate, actualWeek, isNextSemester,
+                            courses, periodTimes, periodCount, displayPreferences, agenda, clock, topInset,
+                            pageScrolls, restoredScrolls, if (mode) dayOffset else weekOffset, reduced,
+                            onWeekChange, onDayChange, onCourseClick, onCourseLongClick, onSettingsClick,
+                            onShown = { week, day, scroll -> shownWeek = week; shownDay = day; activeScroll = scroll },
+                            onScroll = { if (mode) dayOffset = it else weekOffset = it })
+                    }
                 }
             }
         }

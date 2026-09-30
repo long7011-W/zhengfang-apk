@@ -80,23 +80,30 @@ private fun ScheduleCourseSheetContent(course: ScheduleCourseUi, account: String
         ReminderAvailability.NoUpcoming -> "本学期没有后续课次"
         ReminderAvailability.InactiveAccount -> "当前账号暂未安排提醒"
     }
+    // 「设置提醒权限」按钮与"打开开关却什么都没排"共用同一段申请逻辑。
+    val requestReminderPermission: () -> Unit = {
+        val permissions = scheduler.permissions()
+        if (!permissions.notifications && Build.VERSION.SDK_INT >= 33 &&
+            androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
+            permissionRequest.launch(Manifest.permission.POST_NOTIFICATIONS)
+        } else {
+            val intent = if (!permissions.exactAlarms && Build.VERSION.SDK_INT >= 31)
+                Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
+            else if (Build.VERSION.SDK_INT >= 26) Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+            runCatching { context.startActivity(intent) }
+        }
+    }
     CourseDetailContent(
         CourseDetailUiState(course, conflicts, record?.enabled == true, term.isNotBlank(), description,
             record?.enabled == true && status.availability == ReminderAvailability.NeedsPermission,
             status.availability == ReminderAvailability.NeedsTime, !ScheduleWeeks.parse(course.weeks).valid, sourceCenterX, timeRange),
-        state, close, onReminderChanged = { scheduler.setEnabled(key, course.record(), it) },
-        onPermission = {
-            val permissions = scheduler.permissions()
-            if (!permissions.notifications && Build.VERSION.SDK_INT >= 33 &&
-                androidx.core.content.ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) != android.content.pm.PackageManager.PERMISSION_GRANTED) {
-                permissionRequest.launch(Manifest.permission.POST_NOTIFICATIONS)
-            } else {
-                val intent = if (!permissions.exactAlarms && Build.VERSION.SDK_INT >= 31)
-                    Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM, Uri.parse("package:${context.packageName}"))
-                else if (Build.VERSION.SDK_INT >= 26) Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
-                else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
-                runCatching { context.startActivity(intent) }
-            }
-        }, onConfigureTime, onEdit, onDelete
+        state, close,
+        onReminderChanged = { enabled ->
+            scheduler.setEnabled(key, course.record(), enabled)
+            // 打开开关时若权限不足就直接拉起申请，避免"开关亮了却一个闹钟都没排"。
+            if (enabled && !scheduler.permissions().available) requestReminderPermission()
+        },
+        onPermission = { requestReminderPermission() }, onConfigureTime, onEdit, onDelete
     )
 }

@@ -93,7 +93,7 @@ private fun SchoolSearchDialog(schools: List<SchoolConfig>, onDismiss: () -> Uni
                 if (pkg == null) { problem = "适配已暂存，相关任务结束后请重新选择；学校尚未切换"; gate.finish(item.token); busy = false }
                 else bind(pkg, item.school, item.token)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { if (gate.current(item.token)) { problem = error.message; cancel() } }
+            catch (error: Exception) { if (gate.current(item.token)) { problem = PluginFailure.userMessage(error); cancel() } }
         }
     }
     fun choose(row: SchoolSearchResult, provider: SchoolSearchProvider) {
@@ -111,7 +111,7 @@ private fun SchoolSearchDialog(schools: List<SchoolConfig>, onDismiss: () -> Uni
                 if (PluginUpdatePolicy.expanded(null, candidate.manifest).isNotEmpty()) pending = item
                 else activate(item, false)
             } catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { if (gate.current(token)) { problem = "安装未完成：${error.message.orEmpty()}"; cancel() } }
+            catch (error: Exception) { if (gate.current(token)) { problem = "安装未完成：${PluginFailure.userMessage(error)}"; cancel() } }
         }
     }
     SystemDialog(onDismissRequest = ::dismiss, title = { Text("搜索学校") },

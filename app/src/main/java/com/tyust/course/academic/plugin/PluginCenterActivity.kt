@@ -120,13 +120,13 @@ class PluginCenterActivity : ComponentActivity() {
                 busy = true; message = ""
                 try { block() }
                 catch (cancelled: CancellationException) { throw cancelled }
-                catch (error: Exception) { message = error.message ?: "操作暂时未完成，请重试" }
+                catch (error: Exception) { message = PluginFailure.userMessage(error) }
                 finally { busy = false }
             }
         }
         LaunchedEffect(generation) {
             try { refresh() } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { message = e.message ?: "已安装插件读取失败" }
+            catch (e: Exception) { message = PluginFailure.userMessage(e) }
         }
         fun loadCatalog() {
             if (catalogJob?.isActive == true) return

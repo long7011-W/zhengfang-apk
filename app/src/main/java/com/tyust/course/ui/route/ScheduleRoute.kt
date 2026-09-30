@@ -126,6 +126,11 @@ fun ScheduleRoute(isActive: Boolean = true) {
     }
     var isLoading by remember { mutableStateOf(false) }
     var backgroundRefreshing by remember { mutableStateOf(false) }
+    // 只由用户下拉置位：进入页面时的自动同步不该弹出下拉指示器。
+    var pullRefreshing by remember { mutableStateOf(false) }
+    LaunchedEffect(isLoading, backgroundRefreshing) {
+        if (!isLoading && !backgroundRefreshing) pullRefreshing = false
+    }
     var loadError by remember(routeAccountKey) { mutableStateOf("") }
     var studyLoadJob by remember(routeAccountKey) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var studyGeneration by remember(routeAccountKey) { mutableIntStateOf(0) }
@@ -436,6 +441,8 @@ fun ScheduleRoute(isActive: Boolean = true) {
         isLoading = isLoading,
         errorMessage = loadError,
         onRetry = { loadSchedule(true) },
+        isRefreshing = pullRefreshing,
+        onRefresh = { pullRefreshing = true; loadSchedule(true) },
         periodTimes = periodTimes,
         periodCount = periodCount,
         firstWeekDate = displayedTimeBase?.firstWeekDate,

@@ -46,6 +46,8 @@ class ScheduleReminderScheduler private constructor(private val context: Context
         const val EXTRA_REMINDER_ID = "course_reminder_id"
         const val EXTRA_REVISION = "course_reminder_revision"
         const val EXTRA_TRIGGER = "course_reminder_trigger"
+        /** 闹钟迟到投递的容忍窗口：超过它说明这节课已经过半，只续排下一次，不再补发提醒。 */
+        private const val LATE_DELIVERY_WINDOW = 10 * 60_000L
         @Volatile private var instance: ScheduleReminderScheduler? = null
         @JvmStatic fun get(context: Context): ScheduleReminderScheduler = instance ?: synchronized(this) {
             instance ?: ScheduleReminderScheduler(context.applicationContext).also { instance = it }
@@ -240,7 +242,10 @@ class ScheduleReminderScheduler private constructor(private val context: Context
         if (now < plan.triggerAt) return
         // An old broadcast must never replace or advance a newer pending occurrence.
         savePlans(scheduledPlans() - id)
-        if (now >= plan.triggerAt && now < plan.startsAt) {
+        // Doze / OEM 清理会让闹钟晚到。迟到在容忍窗口内仍然提醒（文案标注已开始），
+        // 超过窗口说明这节课已经上了一半以上，就不再打扰，只续排下一次。
+        if (now < plan.startsAt + LATE_DELIVERY_WINDOW) {
+            val late = now >= plan.startsAt
             val manager = context.getSystemService(NotificationManager::class.java)
             if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(NotificationChannel(CHANNEL, "课程提醒", NotificationManager.IMPORTANCE_DEFAULT))
             val open = Intent(context, MainActivity::class.java).apply {
@@ -251,7 +256,7 @@ class ScheduleReminderScheduler private constructor(private val context: Context
             }
             val content = PendingIntent.getActivity(context, 0, open, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
             val notification = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_course_reminder)
-                .setContentTitle("${record.course.name} · 即将上课")
+                .setContentTitle("${record.course.name} · ${if (late) "已开始上课" else "即将上课"}")
                 .setContentText(listOf(record.course.location, "第 ${record.course.startPeriod}-${record.course.endPeriod} 节").filter { it.isNotBlank() }.joinToString(" · "))
                 .setContentIntent(content).setAutoCancel(true).setOnlyAlertOnce(true).build()
             try { NotificationManagerCompat.from(context).notify(id, 1, notification) } catch (_: SecurityException) { }

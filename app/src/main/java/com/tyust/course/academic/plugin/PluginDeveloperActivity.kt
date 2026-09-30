@@ -86,7 +86,7 @@ class PluginDeveloperActivity : ComponentActivity() {
                     selected = imported?.let { AcademicProviderRegistry.packages().active(it.manifest.id) }
                     operation = selected?.manifest?.capabilities?.firstOrNull() ?: "study.terms"
                 } catch (e: CancellationException) { throw e }
-                catch (e: Exception) { feedback = e.message ?: "导入失败" }
+                catch (e: Exception) { feedback = PluginFailure.userMessage(e) }
                 finally { busy = false }
             }
         }
@@ -100,7 +100,7 @@ class PluginDeveloperActivity : ComponentActivity() {
                 catalogEntries = entries.orEmpty()
                 feedback = when { entries == null -> "当前版本未配置适配目录"; entries.isEmpty() -> "目录中暂时没有适配"; else -> "目录已更新，可选择适配进行安装" }
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { feedback = e.message.orEmpty() }
+            catch (e: Exception) { feedback = PluginFailure.userMessage(e) }
             finally { busy = false }
         } }
         fun installFromCatalog(id: String, addSchool: Boolean) { scope.launch {
@@ -113,7 +113,7 @@ class PluginDeveloperActivity : ComponentActivity() {
                 feedback = "${pkg.manifest.name} 安装完成"
                 if (addSchool && pkg.manifest.isAcademic) bindCandidate = pkg
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { feedback = e.message ?: "安装失败，请重试" }
+            catch (e: Exception) { feedback = PluginFailure.userMessage(e) }
             finally { busy = false }
         } }
         GlassPageScaffold(title = "插件高级工具", subtitle = "学校连接与校园服务", onBack = { finish() }) { padding ->
@@ -202,7 +202,7 @@ class PluginDeveloperActivity : ComponentActivity() {
                                     selected = withContext(Dispatchers.IO) { AcademicProviderRegistry.packages().rollback(pkg.manifest.id) }
                                     AcademicProviderRegistry.reload(); refresh(); feedback = "已恢复上一版本"
                                 } catch (e: CancellationException) { throw e }
-                                catch (e: Exception) { feedback = e.message.orEmpty() }
+                                catch (e: Exception) { feedback = PluginFailure.userMessage(e) }
                                 finally { busy = false }
                             } }, trailing = { ForwardIcon() })
                         if (pkg.manifest.isService || pkg.manifest.isNative) InsetGroupedRow(title = "卸载此插件", icon = Icons.Outlined.Close, enabled = !busy, showDivider = false,
@@ -231,7 +231,7 @@ class PluginDeveloperActivity : ComponentActivity() {
                             OutlinedTextField(catalogKey, { catalogKey = it }, label = { Text("测试公钥 JSON") }, modifier = Modifier.fillMaxWidth(), enabled = !busy)
                             LiquidButton(onClick = {
                                 try { AcademicProviderRegistry.configureLocalCatalog(catalogUrl, catalogKey); feedback = "本地目录已配置" }
-                                catch (e: Exception) { feedback = e.message.orEmpty() }
+                                catch (e: Exception) { feedback = PluginFailure.userMessage(e) }
                             }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("应用本地目录") }
                             LiquidButton(onClick = { AcademicProviderRegistry.restoreOfficialCatalog(); feedback = "已恢复正式目录"; loadCatalog() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("恢复正式目录") }
                         }

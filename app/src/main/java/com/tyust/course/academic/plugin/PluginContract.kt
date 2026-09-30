@@ -13,6 +13,51 @@ enum class PluginErrorCode {
 
 class PluginException(val code: PluginErrorCode, message: String, cause: Throwable? = null) : Exception(message, cause)
 
+/**
+ * Host failures that reach the interface must read like something a student can act on.
+ * Manifest validation reports JSON Schema paths such as "$.category: 不允许额外字段",
+ * which names neither the cause nor the fix. Debug builds keep the raw detail appended so
+ * developers do not lose it; this object stays free of Android APIs so JVM tests can call it.
+ */
+object PluginFailure {
+    private const val EXTRA_FIELD = ": 不允许额外字段"
+    private const val MISSING_FIELD = ": 缺少字段"
+
+    fun userMessage(error: Throwable, debug: Boolean = com.tyust.course.BuildConfig.DEBUG): String {
+        val raw = error.message.orEmpty()
+        val visible = when (val code = (error as? PluginException)?.code) {
+            null -> "操作未完成，请重试"
+            PluginErrorCode.BAD_SIGNATURE -> "插件包签名无效或来源不可信，已拒绝安装"
+            PluginErrorCode.VALIDATION_FAILED -> {
+                val extra = fieldName(raw, EXTRA_FIELD)
+                val missing = fieldName(raw, MISSING_FIELD)
+                when {
+                    extra != null -> "插件包与当前 App 版本不兼容：清单字段「$extra」不受支持。请升级 App，或联系插件作者更新插件包"
+                    missing != null -> "插件包缺少必需字段「$missing」，请重新下载或联系插件作者"
+                    else -> "插件包内容校验未通过，请重新下载；若持续失败请联系插件作者"
+                }
+            }
+            PluginErrorCode.UNSUPPORTED -> "当前 App 版本不支持该插件需要的能力，请升级 App"
+            PluginErrorCode.UNTRUSTED_URL -> "插件请求超出了它声明的网络范围，已拦截"
+            PluginErrorCode.CONFLICT -> "插件版本已变化，请重新选择后重试"
+            PluginErrorCode.RESOURCE_LIMIT -> "插件超出资源限制，已停止该操作"
+            PluginErrorCode.NETWORK_RETRYABLE, PluginErrorCode.TIMEOUT -> "网络暂时不可用，请稍后重试"
+            PluginErrorCode.PERMISSION_DENIED -> "该操作未获授权，请在插件详情中确认权限后重试"
+            PluginErrorCode.STALE_CONTEXT -> "页面或账号已变化，请重试"
+            else -> "操作未完成（${code.name}），请重试"
+        }
+        return if (debug) "$visible（调试信息：$raw）" else visible
+    }
+
+    /** Extracts the field path from a validator message such as "$.category: 不允许额外字段". */
+    private fun fieldName(raw: String, suffix: String): String? {
+        val trimmed = raw.trim()
+        if (!trimmed.startsWith("$") || !trimmed.endsWith(suffix)) return null
+        val name = trimmed.substring(1, trimmed.length - suffix.length).trim().removePrefix(".")
+        return name.takeIf { it.isNotEmpty() && it.all { ch -> ch.isLetterOrDigit() || ch == '.' || ch == '_' || ch == '[' || ch == ']' } }
+    }
+}
+
 object PluginLimits {
     const val API_VERSION = 3
     const val MEMORY_BYTES = 64L * 1024 * 1024

@@ -518,6 +518,8 @@ fun GlassPullRefreshBox(
     isRefreshing: Boolean,
     onRefresh: () -> Unit,
     modifier: Modifier = Modifier,
+    /** 指示器距容器顶部的距离。内容全出血顶到屏幕最上沿时（如课表页），需要传顶栏高度，否则指示器会被顶栏盖住。 */
+    indicatorTopPadding: androidx.compose.ui.unit.Dp = 10.dp,
     content: @Composable androidx.compose.foundation.layout.BoxScope.() -> Unit
 ) {
     val state = androidx.compose.material3.pulltorefresh.rememberPullToRefreshState()
@@ -532,7 +534,7 @@ fun GlassPullRefreshBox(
                 Box(
                     modifier = Modifier
                         .align(Alignment.TopCenter)
-                        .padding(top = 10.dp)
+                        .padding(top = indicatorTopPadding)
                         .graphicsLayer {
                             val f = if (isRefreshing) 1f else fraction
                             alpha = f

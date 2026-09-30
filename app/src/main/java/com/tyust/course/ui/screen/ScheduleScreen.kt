@@ -152,11 +152,12 @@ import com.tyust.course.schedule.ScheduleViewPosition
 
 private val ScheduleTimeColumnWidth = 40.dp
 internal val ScheduleTimeColumnShadowWidth = 8.dp
-private val SchedulePeriodHeight = 84.dp
+private val SchedulePeriodHeight = 64.dp
 
 /** 窄屏收窄的时间列与网格左右留白，把省下的宽度全给七个日列。 */
 private val ScheduleTimeColumnWidthTight = 40.dp
-private val SchedulePeriodHeightTight = 68.dp
+/** 时间列本身（节次号 + 起止时间）约需 60dp，行高不宜再低于 62dp，否则末行时间会被裁掉。 */
+private val SchedulePeriodHeightTight = 62.dp
 private val ScheduleGridPaddingTight = 10.dp
 
 /**
@@ -172,7 +173,7 @@ internal fun scheduleGridPadding(): Dp =
 internal fun scheduleTimeColumnWidth(): Dp =
     rememberScreenMetrics().wide(ScheduleTimeColumnWidth, ScheduleTimeColumnWidthTight)
 
-/** 单节课的行高。短屏收到 68dp，一屏能多看一节多。 */
+/** 单节课的行高。短屏收到 62dp，一屏能多看一节多。 */
 @Composable
 private fun schedulePeriodHeight(): Dp =
     rememberScreenMetrics().tall(SchedulePeriodHeight, SchedulePeriodHeightTight)
@@ -241,7 +242,7 @@ fun ScheduleGrid(
     // status changes keep one geometry while names and teachers remain complete.
     val periodHeight = rememberFullCoursePeriodHeight(courses, columnWidth,
         maxOf(schedulePeriodHeight() * if (compact) 0.85f else 1f,
-            (if (compact) 70.dp else 76.dp) * density.fontScale.coerceAtLeast(1f)))
+            (if (compact) 62.dp else 64.dp) * density.fontScale.coerceAtLeast(1f)))
     val anchor = remember(scrollState) { GridScrollAnchor() }
     val periodPixels = with(density) { periodHeight.toPx() }
     val contentTop = with(density) { (topInset + 8.dp).toPx() }
