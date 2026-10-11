@@ -19,11 +19,19 @@ class PluginOperation(
     val packageDigest: String = manifest.version,
     private val scopeStillActive: () -> Boolean = { true }
 ) {
+    companion object {
+        private val live = java.util.Collections.synchronizedMap(java.util.WeakHashMap<PluginOperation, Unit>())
+        fun cancelPlugin(id: String) {
+            val operations = synchronized(live) { live.keys.filter { it.manifest.id == id } }
+            operations.forEach(PluginOperation::close)
+        }
+    }
     val epoch = session.epoch
     private val active = AtomicBoolean(true)
     private val calls = ConcurrentHashMap.newKeySet<Call>()
     private val mutation = AtomicBoolean(false)
     private val businessMutation = AtomicBoolean(false)
+    init { live[this] = Unit }
     val mutationSent: Boolean get() = mutation.get()
     val context: JSONObject get() = JSONObject().put("schoolId", session.key.schoolId)
         .put("accountId", session.key.accountKey).put("sessionEpoch", epoch)
@@ -48,20 +56,23 @@ class PluginOperation(
             throw PluginException(PluginErrorCode.RESULT_UNKNOWN, "单次调用不能重放写入请求")
         mutation.set(true)
     }
-    /** Only PluginHost's reviewed shared-request approval can reach this path. */
-    internal fun markReviewedReadState() {
+    /** Only host-authorized shared-site or legacy read-state requests reach this path. */
+    internal fun markAuthorizedSharedWrite() {
         requireActive()
-        if (!manifest.isService || method !in setOf("service.page", "service.action"))
+        if (!(manifest.isService && method in setOf("service.page", "service.action") || manifest.isNative && method == "host.effect"))
             throw PluginException(PluginErrorCode.PERMISSION_DENIED, "状态更新必须通过共享服务请求")
         mutation.set(true)
     }
     fun register(call: Call) { calls.add(call); try { requireActive() } catch (e: Exception) { call.cancel(); calls.remove(call); throw e } }
     fun unregister(call: Call) { calls.remove(call) }
-    fun close() { active.set(false); calls.forEach(Call::cancel); calls.clear() }
-    fun failure(code: PluginErrorCode, message: String): PluginException = PluginException(
+    fun close() { active.set(false); calls.forEach(Call::cancel); calls.clear(); live.remove(this) }
+    fun failure(code: PluginErrorCode, message: String): PluginException {
+        PluginTrace.failure(this, code)
+        return PluginException(
         if (mutationSent && code in setOf(PluginErrorCode.TIMEOUT, PluginErrorCode.CANCELLED,
             PluginErrorCode.RUNTIME_EXITED, PluginErrorCode.NETWORK_RETRYABLE, PluginErrorCode.RESOURCE_LIMIT,
             PluginErrorCode.PAGE_CHANGED, PluginErrorCode.VALIDATION_FAILED, PluginErrorCode.STALE_CONTEXT,
             PluginErrorCode.SESSION_EXPIRED, PluginErrorCode.PERMISSION_DENIED))
             PluginErrorCode.RESULT_UNKNOWN else code, message)
+    }
 }

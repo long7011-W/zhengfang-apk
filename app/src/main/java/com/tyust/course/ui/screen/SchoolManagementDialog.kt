@@ -24,8 +24,8 @@ fun SchoolManagementDialog(selectedSchoolId: String?, onSelect: (SchoolConfig) -
     var removing by remember { mutableStateOf<SchoolConfig?>(null) }
     var notice by remember { mutableStateOf("") }
     SystemDialog(onDismissRequest = onDismiss, title = { Text("选择与管理学校") },
-        confirmButton = { TextButton(onClick = { adding = true }) { Text("添加学校") } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }) {
+        confirmButton = { SystemDialogButton(primary = true, onClick = { adding = true }) { Text("添加学校") } },
+        dismissButton = { SystemDialogButton(onClick = onDismiss) { Text("关闭") } }) {
         Column(Modifier.heightIn(max = 400.dp).verticalScroll(rememberScrollState())) {
             schools.forEach { school ->
                 val custom = manager.isCustomSchool(school.id)

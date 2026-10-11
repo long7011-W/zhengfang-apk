@@ -9,6 +9,7 @@ enum class AcademicSystem(val id: String, val serial: Boolean) {
     QZ_OLD("qz_old", true),
     JINZHI("jinzhi", true),
     CHENGFANG("chengfang", true),
+    EAMS("eams", true), CHAOXING_ACADEMIC("chaoxing_academic", true),
     AUTO("auto", true), LEGACY_ZF("legacy_zf", false);
 
     companion object { fun fromId(id: String?): AcademicSystem? = values().firstOrNull { it.id == id } }
@@ -40,8 +41,20 @@ data class CourseQuery(
     val teacher: String = "",
     val start: Int = 0,
     val pageSize: Int = 50,
-    val scopeId: String = ""
+    val scopeId: String = "",
+    val filters: CourseFilterValues? = null
 )
+
+/** Cursor is opaque to callers; null means the provider has finished this query. */
+data class AcademicPage<T>(val items: List<T>, val nextCursor: String? = null)
+
+data class CourseFilterOption(val value: String, val label: String)
+data class CourseFilterGroup(val id: String, val label: String, val kind: String, val options: List<CourseFilterOption>)
+data class CourseFilters(val roundId: String, val revision: String, val groups: List<CourseFilterGroup>)
+data class CourseFilterValues(val revision: String, val values: Map<String, List<String>>) {
+    fun toJson() = org.json.JSONObject().put("revision", revision).put("values",
+        org.json.JSONObject().apply { values.forEach { (key, value) -> put(key, org.json.JSONArray(value)) } })
+}
 
 data class CourseContext(
     val sessionEpoch: Long,
@@ -70,7 +83,8 @@ data class CourseOffer(
     val selected: Int? = null,
     val scopeId: String,
     val raw: Map<String, String> = emptyMap(),
-    val publicIdentity: AcademicCourseIdentity? = null
+    val publicIdentity: AcademicCourseIdentity? = null,
+    val sectionCount: Int? = null
 ) { val identity: AcademicCourseIdentity get() = publicIdentity ?: BuiltinCourseData.identity(stableId, raw) }
 
 data class CourseSection(
@@ -118,12 +132,24 @@ class AcademicException(val status: AcademicStatus, message: String, cause: Thro
 data class AcademicSessionKey(val schoolId: String, val accountKey: String)
 
 interface AcademicProtocolAdapter {
+    val hasCourseFilters: Boolean get() = false
+    suspend fun courseFilters(context: CourseContext, roundId: String): CourseFilters? = null
     fun restoreOffer(snapshot: Map<String, String>): CourseOffer? = null
     suspend fun login(credentials: Credentials): LoginResult
     suspend fun validateSession(): LoginResult
     suspend fun loadCourseContext(): CourseContext
     suspend fun listCourses(context: CourseContext, query: CourseQuery): List<CourseOffer>
+    suspend fun coursePage(context: CourseContext, query: CourseQuery, cursor: String? = null): AcademicPage<CourseOffer> {
+        val start = cursor?.toIntOrNull() ?: 0
+        require(start >= 0)
+        val rows = listCourses(context, query.copy(start = start))
+        return AcademicPage(rows, if (rows.size >= query.pageSize) (start + rows.size).toString() else null)
+    }
     suspend fun listSections(course: CourseOffer): List<CourseSection>
+    suspend fun sectionPage(course: CourseOffer, cursor: String? = null): AcademicPage<CourseSection> {
+        require(cursor == null)
+        return AcademicPage(listSections(course))
+    }
     suspend fun select(target: SelectionTarget): SelectionResult
     suspend fun selected(context: CourseContext): List<SelectedCourse>
     suspend fun drop(target: SelectionTarget): OperationResult

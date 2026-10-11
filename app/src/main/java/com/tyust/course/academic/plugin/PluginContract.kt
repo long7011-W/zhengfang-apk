@@ -236,9 +236,13 @@ data class PluginManifest(val json: JSONObject) {
         if (kind == "configuration" && (capabilities.isNotEmpty() || json.has("entry"))) invalid("配置型适配不能包含可执行能力")
         if (kind != "configuration" && json.optString("entry") != "index.js") invalid("可执行适配缺少入口")
         for ((group, expected) in GROUPS) {
-            val actual = capabilities.filter { it.startsWith("$group.") }.toSet()
+            val actual = capabilities.filter { it.startsWith("$group.") && it != "selection.filters" }.toSet()
             if (actual.isNotEmpty() && actual != expected) invalid("$group 必须完整覆盖能力组")
         }
+        if ((json.has("studyOptions") || "selection.filters" in capabilities) &&
+            (apiVersion != 3 || json.optInt("minAppVersionCode") < 97)) invalid("学期补全及网站筛选需要 API 3 与最低版本 97")
+        if (json.has("studyOptions") && "study.grades" !in capabilities) invalid("学期格式声明需要成绩能力")
+        if ("selection.filters" in capabilities && !capabilities.containsAll(SELECTION)) invalid("网站筛选需要完整选课能力组")
         network.forEach { PluginNetworkPolicy.validateRule(it) }
         json.optJSONObject("school")?.takeIf { it.has("userAgent") }?.let { PluginNetworkPolicy.validateUserAgent(it.getString("userAgent")) }
     }
@@ -248,7 +252,7 @@ data class PluginManifest(val json: JSONObject) {
         val AUTH = setOf("auth.start", "auth.resume", "auth.refreshCaptcha", "auth.validate")
         val SELECTION = setOf("selection.catalog", "selection.courses", "selection.sections", "selection.enrolled", "selection.select", "selection.drop")
         val STUDY = setOf("study.terms", "study.schedule", "study.calendar", "study.grades", "study.gradeDetails", "study.exams")
-        val ALL = AUTH + STUDY + SELECTION
+        val ALL = AUTH + STUDY + SELECTION + "selection.filters"
         val GROUPS = mapOf("auth" to AUTH, "selection" to SELECTION)
     }
 }

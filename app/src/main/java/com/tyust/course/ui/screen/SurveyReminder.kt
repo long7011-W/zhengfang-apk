@@ -1,5 +1,6 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.system.SystemDialogButton
 import android.view.ViewTreeObserver
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -50,13 +51,13 @@ fun SurveyReminder(repository: SurveyRepository, canPresent: Boolean, foreground
     if (visible.isNotEmpty() && canPresent && foreground && state.saved.remindersEnabled) {
         SystemDialog(ownerKey = "survey-reminder", onDismissRequest = { visible = emptyList() },
             title = { Text(if (visible.size == 1) "有一份问卷待填写" else "有 ${visible.size} 份问卷待填写") },
-            confirmButton = { TextButton(onClick = { val id = visible.first().id; visible = emptyList(); onOpen(id) }) { Text("查看问卷") } },
-            dismissButton = { TextButton(onClick = { visible = emptyList() }) { Text("稍后") } }) {
+            confirmButton = { SystemDialogButton(primary = true, onClick = { val id = visible.first().id; visible = emptyList(); onOpen(id) }) { Text("查看问卷") } },
+            dismissButton = { SystemDialogButton(onClick = { visible = emptyList() }) { Text("稍后") } }) {
             Column(modifier.heightIn(max = 300.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 visible.forEach { survey -> Text(survey.title, style = MaterialTheme.typography.titleMedium) }
             }
             Text("完成后请在问卷页标记“已填写”，即可停止提醒。未完成的问卷每天最多提醒一次。", style = MaterialTheme.typography.bodySmall)
-            TextButton(onClick = { scope.launch { repository.setRemindersEnabled(false); visible = emptyList() } }) { Text("关闭问卷提醒") }
+            SystemDialogButton(onClick = { scope.launch { repository.setRemindersEnabled(false); visible = emptyList() } }) { Text("关闭问卷提醒") }
         }
     }
 }

@@ -28,35 +28,56 @@ object NativePluginRunner {
         val host = PluginHost(operation, File(app.filesDir, "academic-plugin-storage"), PluginWebSessionCookies.jar(app, pkg, session, active), dataGuard = PluginDataGuard(app, pkg))
         val result = PluginSandboxClient(app).execute(pkg.source, args, operation, host)
         operation.requireActive()
-        val schema = PluginSchema(PluginJson.parse(app.assets.open("academic-plugin/contract.schema.json").bufferedReader().use { it.readText() }))
-        return schema.response(method, result).also { if (method in setOf("ui.init", "ui.reduce", "task.run")) NativePluginContract.validateResult(it, method == "task.run") }
+        val schema = PluginContractCache.schema(app)
+        return schema.response(method, result).also {
+            if (method in setOf("ui.init", "ui.reduce", "task.run")) NativePluginContract.validateResult(it, method == "task.run")
+            if (it.has("navigation")) {
+                if (pkg.manifest.json.optInt("minAppVersionCode") < 114 ||
+                    pkg.manifest.json.optJSONArray("requires")?.let(PluginJson::objects).orEmpty().none { requirement -> requirement.optString("name") == "ui.navigation" && requirement.optInt("version") >= 1 })
+                    throw PluginException(PluginErrorCode.VALIDATION_FAILED, "页面导航需要声明 ui.navigation 及 App 1.0.114")
+                NativePageNavigation.from(it)
+            }
+        }
         } finally { operation.close(); lease.close() }
     }
 }
 
-data class NativeUiSnapshot(val pageId: String = "", val instance: String = "", val view: JSONObject? = null, val busy: Boolean = false, val error: String = "", val errorCode: String = "")
+data class NativeUiSnapshot(val pageId: String = "", val instance: String = "", val view: JSONObject? = null, val busy: Boolean = false, val error: String = "", val errorCode: String = "", val inputValues: Map<String, Any> = emptyMap(), val navigation: NativePageNavigation? = null)
 
 /** Reducers run sequentially. Effects leave QuickJS and return as events to the same page instance. */
 class NativeUiSession(
     private val app: Context, val pkg: PluginPackage, private val session: AcademicSession,
     val host: NativeCapabilityHost, private val active: () -> Boolean
 ) {
-    private data class Pending(val instance: String, val event: JSONObject, val flow: NativeFlow, val init: Boolean = false, val params: JSONObject = JSONObject())
+    private data class Pending(val instance: String, val event: JSONObject, val flow: NativeFlow, val init: Boolean = false, val params: JSONObject = JSONObject(), val queuedAt: Long = android.os.SystemClock.elapsedRealtime(), var edit: NativeInputReconciliation.Edit? = null)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val events = Channel<Pending>(64)
-    private val queuedInputs = mutableMapOf<String, Pending>()
+    private val inputs = NativeInputReconciliation()
+    private val queuedInputs = NativeInputEvents<Pending> { previous, next ->
+        previous.event.put("value", next.event.get("value")); previous.edit = next.edit
+    }
     private val effects = mutableMapOf<String, Job>()
     private val mutableSnapshot = MutableStateFlow(NativeUiSnapshot())
     val snapshot = mutableSnapshot.asStateFlow()
     private var state: Any? = JSONObject()
     private var templateId = ""
+    private var previousViewport = ""
+    private val sandboxConnection = com.tyust.course.academic.plugin.runtime.PluginSandboxConnections.acquire(app)
     private var closed = false
     init {
         host.cancelEffects = { ids -> ids.forEach { effects[it]?.cancel() } }
+        if (pkg.manifest.permissions.any { it in setOf("userscripts", "tasks") }) scope.launch {
+            PluginForegroundWork.revision.collect {
+                val instance = mutableSnapshot.value.instance
+                if (instance.isNotBlank() && isCurrent(instance)) events.trySend(Pending(instance,
+                    JSONObject().put("type", "lifecycle").put("name", "tasks.changed"), NativeFlow(false)))
+            }
+        }
         scope.launch {
             for (pending in events) {
                 if (!isCurrent(pending.instance)) continue
-                queuedInputs.entries.removeAll { it.value === pending }
+                android.util.Log.i("PluginUi", "version=${pkg.manifest.version} phase=queue_done elapsedMs=${android.os.SystemClock.elapsedRealtime() - pending.queuedAt}")
+                queuedInputs.consumed(pending)
                 val before = mutableSnapshot.value
                 mutableSnapshot.value = before.copy(busy = true)
                 try {
@@ -66,10 +87,17 @@ class NativeUiSession(
                     val result = withContext(Dispatchers.IO) { NativePluginRunner.invoke(app, pkg, session, if (pending.init) "ui.init" else "ui.reduce", args, context) { isCurrent(pending.instance) } }
                     if (!isCurrent(pending.instance)) continue
                     state = result.get("state")
-                    mutableSnapshot.value = before.copy(view = result.getJSONObject("view"), busy = false, error = "", errorCode = "")
+                    mutableSnapshot.value = mutableSnapshot.value.copy(view = result.getJSONObject("view"), busy = false, error = "", errorCode = "",
+                        navigation = NativePageNavigation.from(result))
                     for (effect in PluginJson.objects(result.getJSONArray("effects"))) runEffect(effect, pending)
                 } catch (error: CancellationException) { if (!scope.isActive) throw error }
                 catch (error: Exception) { if (isCurrent(pending.instance)) showError(error) }
+                finally {
+                    if (isCurrent(pending.instance)) {
+                        inputs.acknowledge(pending.edit)
+                        mutableSnapshot.value = mutableSnapshot.value.copy(inputValues = inputs.values, busy = false)
+                    }
+                }
             }
         }
     }
@@ -81,9 +109,10 @@ class NativeUiSession(
         if (declaration.optString("renderer") == "web") throw PluginException(PluginErrorCode.UNSUPPORTED, "此页面由网页容器打开")
         if (PluginPlatformContract.requirements(declaration, PluginPages.capabilities()).isNotEmpty()) throw PluginException(PluginErrorCode.UNSUPPORTED, "页面能力条件不满足")
         host.requireCompatible()
-        effects.values.toList().forEach(Job::cancel); effects.clear(); queuedInputs.clear()
+        effects.values.toList().forEach(Job::cancel); effects.clear(); queuedInputs.clear(); inputs.clear()
         while (events.tryReceive().isSuccess) { /* Retire queued events from the old page. */ }
         state = JSONObject()
+        previousViewport = ""
         val instance = UUID.randomUUID().toString()
         mutableSnapshot.value = NativeUiSnapshot(pageId, instance, busy = true)
         if (!events.trySend(Pending(instance, JSONObject(), NativeFlow(false), init = true, params = params)).isSuccess) showError(PluginException(PluginErrorCode.RESOURCE_LIMIT, "页面请求过多"))
@@ -91,14 +120,37 @@ class NativeUiSession(
     fun event(instance: String, event: JSONObject, userGesture: Boolean) {
         if (!isCurrent(instance)) return
         val nodeId = event.optString("nodeId")
+        var continuous = false
+        var optimistic = false
+        val flow = NativeFlow(userGesture)
         if (nodeId.isNotBlank()) {
             val node = mutableSnapshot.value.view?.let { NativePluginContract.findNode(it, nodeId) } ?: return
             if (!node.optBoolean("enabled", true) || event.optString("name") !in setOf(node.optString("event"), node.optString("onEnd"))) return
+            continuous = node.optString("type") in setOf("input", "slider") && event.optString("type") == "input"
+            optimistic = node.optString("type") in setOf("input", "slider", "segmented", "toggle", "select", "pattern") && event.optString("type") == "input" && event.has("value")
+            flow.submission = runCatching { NativeSubmissionGrant.fromButton(pkg.manifest, node, event, userGesture) }.getOrNull()
         }
-        if (event.optString("type") == "input") queuedInputs[nodeId]?.let { it.event.put("value", event.get("value")); return }
-        val pending = Pending(instance, event, NativeFlow(userGesture))
-        if (events.trySend(pending).isSuccess) { if (event.optString("type") == "input") queuedInputs[nodeId] = pending }
-        else showError(PluginException(PluginErrorCode.RESOURCE_LIMIT, "操作过快，请稍后重试"))
+        val edit = if (optimistic) inputs.edit(nodeId, event.get("value")) else null
+        if (edit != null) mutableSnapshot.value = mutableSnapshot.value.copy(inputValues = inputs.values)
+        val pending = Pending(instance, event, flow, edit = edit)
+        val key = if (continuous) instance + ":" + nodeId + ":" + event.optString("name") else null
+        if (!queuedInputs.offer(key, pending) { events.trySend(it).isSuccess }) {
+            inputs.acknowledge(edit)
+            mutableSnapshot.value = mutableSnapshot.value.copy(inputValues = inputs.values)
+            showError(PluginException(PluginErrorCode.RESOURCE_LIMIT, "操作过快，请稍后重试"))
+        }
+    }
+    fun viewportChanged(value: JSONObject) {
+        val serialized = value.toString()
+        if (previousViewport == serialized) return
+        val declaration = runCatching { NativePluginContract.page(pkg.manifest, templateId) }.getOrNull() ?: return
+        val requirements = PluginJson.objects(declaration.optJSONArray("requires") ?: org.json.JSONArray()) +
+            PluginJson.objects(pkg.manifest.json.optJSONArray("requires") ?: org.json.JSONArray())
+        if (requirements.none { it.optString("name") == "ui.viewport" && it.optInt("version") == 1 }) return
+        val instance = mutableSnapshot.value.instance
+        if (!isCurrent(instance)) return
+        val pending = Pending(instance, JSONObject().put("type", "lifecycle").put("name", "viewport.changed").put("value", value), NativeFlow(false))
+        if (queuedInputs.offer(instance + ":viewport", pending) { events.trySend(it).isSuccess }) previousViewport = serialized
     }
     fun menu(action: JSONObject) {
         val page = action.optString("pageId")
@@ -135,5 +187,5 @@ class NativeUiSession(
         mutableSnapshot.value = mutableSnapshot.value.copy(busy = false, error = error.message ?: "插件暂时不可用", errorCode = (error as? PluginException)?.code?.name ?: "RUNTIME_EXITED")
     }
     private fun isCurrent(instance: String): Boolean = !closed && active() && !session.retired && mutableSnapshot.value.instance == instance
-    fun close() { closed = true; events.close(); effects.values.toList().forEach(Job::cancel); scope.cancel(); host.close(); session.retire() }
+    fun close() { sandboxConnection.close(); closed = true; events.close(); effects.values.toList().forEach(Job::cancel); scope.cancel(); host.close(); session.retire() }
 }

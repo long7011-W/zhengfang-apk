@@ -14,7 +14,13 @@ object PluginScheduleImport {
         var duplicates = 0
         PluginJson.objects(incoming).forEach { item ->
             val identity = key(item)
-            if (identity in seen) duplicates++ else seen[identity] = JSONObject(item.toString())
+            val prior = seen[identity]
+            if (prior != null) {
+                duplicates++
+                val merged = com.tyust.course.schedule.ScheduleDetails.merge(com.tyust.course.schedule.ScheduleDetails.fromEntry(prior), com.tyust.course.schedule.ScheduleDetails.fromEntry(item))
+                prior.put("details", com.tyust.course.schedule.ScheduleDetails.json(merged))
+                com.tyust.course.schedule.ScheduleDetails.fromEntry(prior) // A merge must retain the contract limits too.
+            } else seen[identity] = JSONObject(item.toString())
         }
         return JSONArray(seen.values.toList()) to duplicates
     }

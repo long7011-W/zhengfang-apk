@@ -45,14 +45,18 @@ fun ServiceExtensionHost(placement: String?, content: @Composable () -> Unit) {
     val context = LocalContext.current
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     val account = ServiceEntryPreferences.accountScope()
+    val providerRevision by AcademicProviderRegistry.revision.collectAsState()
     var entries by remember(account, placement) { mutableStateOf<List<ServiceExtensionEntry>>(emptyList()) }
-    LaunchedEffect(account, placement, lifecycle) {
+    LaunchedEffect(account, placement, lifecycle, providerRevision) {
         if (placement != null) lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             val school = UserManager.getInstance().currentSchool
             entries = withContext(Dispatchers.IO) {
                 val preferences = ServiceEntryPreferences(context, account)
                 try {
-                    ServiceEntryPreferences.declared(AcademicProviderRegistry.packages().list(), school, placement)
+                    // Registry reload verifies installed packages. Reopening a tab only
+                    // needs labels; inflating every archive here holds the store lock
+                    // and can block the UI's concurrent provider/enabled checks.
+                    ServiceEntryPreferences.declared(if (school == null) emptyList() else AcademicProviderRegistry.services(school), school, placement)
                         .filter { school != null && AcademicProviderRegistry.isEnabled(it.pkg.manifest.id, school) && preferences.visible(it.pkg.manifest.id, it.declaration.getString("id"), placement) }
                 } catch (e: CancellationException) { throw e }
                 catch (_: Exception) { emptyList() }

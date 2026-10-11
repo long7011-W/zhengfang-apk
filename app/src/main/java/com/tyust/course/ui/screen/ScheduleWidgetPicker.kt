@@ -1,12 +1,12 @@
 package com.tyust.course.ui.screen
 
+import com.tyust.course.ui.system.SystemDialogButton
 import android.widget.FrameLayout
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
@@ -41,7 +41,7 @@ fun ScheduleWidgetPicker(onDismiss: () -> Unit) {
             for (style in ScheduleWidgetStyle.entries) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text(style.title, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    TextButton(onClick = { ScheduleWidgetUpdater.requestPin(context, style); onDismiss() },
+                    SystemDialogButton(onClick = { ScheduleWidgetUpdater.requestPin(context, style); onDismiss() },
                         modifier = Modifier.semantics { contentDescription = "添加${style.title}" }) { Text("添加到桌面") }
                 }
                 Text(style.description, style = MaterialTheme.typography.bodySmall)
@@ -63,7 +63,7 @@ fun ScheduleWidgetPicker(onDismiss: () -> Unit) {
                         })
                 }
             }
-            Text("三种样式均完整显示课名与教师，并保留时间和地点。长按组件调大尺寸，文字更舒展，还可显示结束时间和更多课程。",
+            Text("小尺寸优先显示课名、时间与地点。长按调大后可显示教师、结束时间和更多课程；可在课表设置中分别修改每个组件的外观。",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }

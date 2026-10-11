@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.tyust.course.ui.system.BindingManagementContent
 import com.tyust.course.ui.system.SystemDialog
 import com.tyust.course.ui.system.SystemConfirmDialog
 import com.tyust.course.ui.system.SystemSecondaryButton
@@ -37,7 +38,7 @@ import com.tyust.course.LoginActivity
 import com.tyust.course.login.PasswordLoginCallback
 import com.tyust.course.login.PasswordLoginGatewayFactory
 import com.tyust.course.manager.AppearanceSettingsManager
-import com.tyust.course.manager.StartupPagePreferences
+import com.tyust.course.academic.plugin.PluginPages
 import com.tyust.course.manager.UserManager
 import com.tyust.course.network.CourseApiClient
 import com.tyust.course.ui.screen.SettingsScreen
@@ -98,22 +99,24 @@ fun SettingsRoute(
     var schoolName by remember { mutableStateOf("") }
     
     // UI States
-    var showSchoolDialog by remember { mutableStateOf(false) }
+    var showSchoolDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showLogoutDialog by remember { mutableStateOf(false) }
     var showClearCacheDialog by remember { mutableStateOf(false) }
     var showAboutDialog by remember { mutableStateOf(false) }
     var showAcademicSupport by remember { mutableStateOf(false) }
     var showCreditsDialog by remember { mutableStateOf(false) }
     var showQuotaDialog by remember { mutableStateOf(false) }
-    var showAccountManagerDialog by remember { mutableStateOf(false) }
+    var showAccountManagerDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var pendingPasswordDelete by remember { mutableStateOf<UserManager.AccountRecord?>(null) }
     var pendingAccountDelete by remember { mutableStateOf<UserManager.AccountRecord?>(null) }
     var showSchoolAdaptation by remember { mutableStateOf(false) }
     var showWallpaperDialog by remember { mutableStateOf(false) }
     var showThemeDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
     var showStartupPageDialog by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
-    val startupPagePreferences = remember(context) { StartupPagePreferences.from(context) }
-    var startupPage by remember(startupPagePreferences) { mutableStateOf(startupPagePreferences.read()) }
+    val pageRevision by PluginPages.revision.collectAsState()
+    val startupPages = remember(pageRevision) { PluginPages.registry.pages() }
+    val startupRoute = remember(pageRevision) { PluginPages.registry.preferredStartup() }
+    val startupPageName = startupPages.firstOrNull { it.id == startupRoute }?.title ?: "页面暂不可用，暂用课表"
     val currentWallpaperName = com.tyust.course.manager.AppearanceSettingsManager.currentWallpaperName
     
     // Quota States
@@ -141,11 +144,8 @@ fun SettingsRoute(
     
     // Update States
     val updateManager = remember { UpdateManager.getInstance(context) }
-    var updateInfo by remember { mutableStateOf<UpdateManager.UpdateInfo?>(null) }
-    var showUpdateDialog by remember { mutableStateOf(false) }
-    var isDownloading by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableIntStateOf(0) }
-    var isCheckingUpdate by remember { mutableStateOf(false) }
+    val updateSnapshot by updateManager.state.collectAsState()
+    val isCheckingUpdate = updateSnapshot.check == UpdateManager.Check.CHECKING
     val currentVersion = remember { updateManager.getCurrentVersionName() }
 
 
@@ -218,7 +218,9 @@ fun SettingsRoute(
             onAccountChanged()
             GlassToaster.show("已切换账号")
         } else {
-            GlassToaster.show("账号切换失败，请重新登录")
+            val record = UserManager.getInstance().savedAccounts.firstOrNull { it.key == accountKey }
+            val check = record?.let { StudentLimitManager.checkCanUseStudent(context, it.schoolId, it.studentName.orEmpty(), it.studentId.orEmpty()) }
+            GlassToaster.show(if (check != null && !check.allowed) check.reason + "，请在配额管理中解绑" else "账号切换失败，请重新登录")
         }
     }
 
@@ -248,45 +250,8 @@ fun SettingsRoute(
     }
     
     fun checkForUpdate() {
-        if (isDemoMode) {
-            GlassToaster.show("本地演示模式不执行更新检查")
-            return
-        }
-        isCheckingUpdate = true
-        GlassToaster.show("正在检查更新…")
-        
-        updateManager.checkForUpdate { info ->
-            isCheckingUpdate = false
-            if (info != null) {
-                updateInfo = info
-                showUpdateDialog = true
-            } else {
-                GlassToaster.show("已是最新版本")
-            }
-        }
-    }
-    
-    fun startDownload() {
-        if (isDemoMode) return
-        val info = updateInfo ?: return
-        isDownloading = true
-        downloadProgress = 0
-        
-        updateManager.downloadApk(
-            downloadUrl = info.downloadUrl,
-            onProgress = { progress ->
-                downloadProgress = progress
-            },
-            onComplete = { file ->
-                isDownloading = false
-                if (file != null && file.exists()) {
-                    updateManager.installApk(file)
-                    showUpdateDialog = false
-                } else {
-                    GlassToaster.show("下载失败，请重试")
-                }
-            }
-        )
+        if (isDemoMode) { GlassToaster.show("本地演示模式不执行更新检查"); return }
+        updateManager.checkForUpdate(manual = true)
     }
 
     fun refreshCookieManually() {
@@ -327,21 +292,6 @@ fun SettingsRoute(
         }
     }
 
-    // Update Dialog
-    if (showUpdateDialog && updateInfo != null && !session.expired) {
-        UpdateDialog(
-            updateInfo = updateInfo!!,
-            currentVersion = currentVersion,
-            onDismiss = { 
-                showUpdateDialog = false 
-                updateInfo = null
-            },
-            onUpdate = { startDownload() },
-            downloadProgress = downloadProgress,
-            isDownloading = isDownloading
-        )
-    }
-    
     val usagePreferences by com.tyust.course.usage.UsageStatsManager.preferences.collectAsState()
     SettingsScreen(
         studentName = studentName,
@@ -365,7 +315,8 @@ fun SettingsRoute(
         onCheckUpdate = { checkForUpdate() },
         onAbout = { showAboutDialog = true },
         onCredits = { showCreditsDialog = true },
-        onLogout = { showLogoutDialog = true },
+        isDemoMode = isDemoMode,
+        onLogout = { if (isDemoMode) performLogout() else showLogoutDialog = true },
         onQuotaClick = { showQuotaDialog = true },
         onRefreshCookieClick = { refreshCookieManually() },
         onLogExport = { com.tyust.course.utils.LogUtils.exportLogs(context) },
@@ -383,7 +334,7 @@ fun SettingsRoute(
         wallpaperName = currentWallpaperName,
         themeName = AppearanceSettingsManager.themeMode.label,
         onThemeSelect = { showThemeDialog = true },
-        startupPageName = startupPage.label,
+        startupPageName = startupPageName,
         onStartupPageSelect = { showStartupPageDialog = true },
         glassEffectEnabled = AppearanceSettingsManager.glassEffectEnabled,
         onGlassEffectChange = { AppearanceSettingsManager.updateGlassEffect(it) },
@@ -409,10 +360,10 @@ fun SettingsRoute(
     }
     if (showStartupPageDialog) {
         com.tyust.course.ui.screen.StartupPageSettingsDialog(
-            page = startupPage,
+            pages = startupPages,
+            selectedRoute = startupRoute,
             onPageChange = {
-                startupPagePreferences.write(it)
-                startupPage = it
+                PluginPages.registry.setStartup(it)
             },
             onDismiss = { showStartupPageDialog = false }
         )
@@ -607,6 +558,7 @@ fun SettingsRoute(
             usedCount = quotaUsedCount,
             maxCount = quotaMaxCount,
             boundNames = quotaBoundNames,
+            onBindingsChanged = ::refreshAccountUiState,
             accounts = quotaAccounts,
             currentAccountKey = currentAccountKey,
             onSwitchAccount = { accountKey ->
@@ -626,6 +578,9 @@ fun SettingsRoute(
             },
             onDeletePassword = { pendingPasswordDelete = it },
             onDeleteAccount = { pendingAccountDelete = it },
+            onRelogin = { showAccountManagerDialog = false; relogin.launch(Intent(context, LoginActivity::class.java).apply {
+                putExtra("force_relogin", true); putExtra(LoginActivity.EXTRA_RETURN_TO_CALLER, true)
+            }) },
             onDismiss = { showAccountManagerDialog = false }
         )
     }
@@ -648,7 +603,7 @@ fun SettingsRoute(
         SimpleConfirmDialog(
             title = "删除账号",
             text = "将删除「${record.displayName}」的账号记录、已保存的密码、登录状态与本地课程缓存，" +
-                "此操作不可恢复。设备绑定名额不会因此释放。",
+                "此操作不可恢复。绑定名额不会自动释放，可在配额管理中解绑。",
             confirmText = "删除账号",
             onConfirm = {
                 deleteAccountEntirely(record)
@@ -680,7 +635,7 @@ fun SettingsRoute(
             onDismissRequest = { dismiss() },
             title = {
                 Text(
-                    text = "选择学校",
+                    text = "学校与教务",
                     style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.onSurface
@@ -694,6 +649,7 @@ fun SettingsRoute(
                 )
             }
         ) {
+            TextButton(onClick = { showAcademicSupport = true }) { Text("当前适配与支持限制") }
             val schools = remember { UserManager.getInstance().supportedSchools }
             LazyColumn(
                 modifier = Modifier
@@ -730,6 +686,7 @@ private fun QuotaStatusDialog(
     usedCount: Int,
     maxCount: Int,
     boundNames: List<String>,
+    onBindingsChanged: () -> Unit,
     accounts: List<UserManager.AccountRecord>,
     currentAccountKey: String,
     onSwitchAccount: (String) -> Unit,
@@ -824,50 +781,7 @@ private fun QuotaStatusDialog(
                     fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurface
                 )
-                if (boundNames.isEmpty()) {
-                    Text(
-                        text = "当前设备尚未绑定账号。",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                } else {
-                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        boundNames.forEachIndexed { index, name ->
-                            Surface(
-                                modifier = Modifier.fillMaxWidth(),
-                                color = MaterialTheme.colorScheme.surface.copy(alpha = 0.72f),
-                                shape = RoundedCornerShape(14.dp)
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Surface(
-                                        modifier = Modifier.size(24.dp),
-                                        color = NeuPrimary.copy(alpha = 0.12f),
-                                        shape = CircleShape
-                                    ) {
-                                        Box(contentAlignment = Alignment.Center) {
-                                            Text(
-                                                text = "${index + 1}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = NeuPrimary,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                    Text(
-                                        text = name,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurface,
-                                        fontWeight = FontWeight.Medium
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
+                BindingManagementContent(onChanged = onBindingsChanged)
             }
 
             if (accounts.isNotEmpty()) {
@@ -942,6 +856,7 @@ private fun AccountManagerDialog(
     onSwitchAccount: (String) -> Unit,
     onDeletePassword: (UserManager.AccountRecord) -> Unit,
     onDeleteAccount: (UserManager.AccountRecord) -> Unit,
+    onRelogin: () -> Unit,
     onDismiss: () -> Unit
 ) {
     SystemDialog(
@@ -982,6 +897,7 @@ private fun AccountManagerDialog(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
+            TextButton(onClick = onRelogin) { Text("重新登录 · 保留已存账号") }
             if (accounts.isEmpty()) {
                 Text(
                     text = "本机还没有保存任何账号。",
@@ -1067,7 +983,7 @@ private fun AccountManagerDialog(
 
             Text(
                 text = "密码经系统密钥库加密后仅保存在本机，用于登录状态失效时自动续期；" +
-                    "退出登录不会删除它。删除账号不会释放设备绑定名额。",
+                    "退出登录不会删除它。删除账号不会自动释放绑定名额，可在配额管理中解绑。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 lineHeight = 18.sp

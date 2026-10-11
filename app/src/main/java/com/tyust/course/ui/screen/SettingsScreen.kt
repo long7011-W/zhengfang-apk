@@ -9,6 +9,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.wrapContentWidth
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -79,6 +81,7 @@ fun SettingsScreen(
     onAbout: () -> Unit,
     onCredits: () -> Unit,
     onLogout: () -> Unit,
+    isDemoMode: Boolean = false,
     onQuotaClick: () -> Unit = {},
     onRefreshCookieClick: () -> Unit = {},
     onLogExport: () -> Unit = {},
@@ -128,7 +131,7 @@ fun SettingsScreen(
         // 内容延伸到玻璃顶栏下方，滚动时从顶栏底下穿过（padding 施加在滚动内容内部）
         Column(
             modifier = Modifier
-                .fillMaxSize()
+                .fillMaxSize().wrapContentWidth(androidx.compose.ui.Alignment.CenterHorizontally).widthIn(max = 680.dp)
                 .verticalScroll(scrollState)
                 .padding(
                     start = PagePadding,
@@ -154,16 +157,9 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Outlined.School,
                     iconTint = Color(0xFF0A84FF),
-                    title = "学校选择",
+                    title = "学校与教务",
                     subtitle = listOf(schoolName.ifBlank { "未选择学校" }, academicSystemName).filter(String::isNotBlank).joinToString(" · "),
                     onClick = onSchoolSelect
-                )
-                SettingsRow(
-                    icon = Icons.Outlined.School,
-                    iconTint = Color(0xFF18796B),
-                    title = "教务支持与限制",
-                    subtitle = academicSystemName.ifBlank { com.tyust.course.academic.AcademicCapabilities.FOUR_SYSTEMS },
-                    onClick = onAcademicSupport
                 )
                 SettingsRow(
                     icon = Icons.Outlined.AssignmentInd,
@@ -189,22 +185,23 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Outlined.ManageAccounts,
                     iconTint = Color(0xFF32ADE6),
-                    title = "账号管理",
+                    title = "账号",
                     subtitle = if (savedAccountCount > 0) {
                         "已保存 $savedAccountCount 个账号 · 可切换或删除"
                     } else {
                         "切换账号、删除已存密码与账号"
                     },
-                    onClick = onAccountManage
+                    onClick = onAccountManage, showDivider = false
                 )
-                SettingsRow(
-                    icon = Icons.AutoMirrored.Outlined.Login,
-                    iconTint = Color(0xFFFF9F0A),
-                    title = "重新登录",
-                    subtitle = "退出当前会话并返回登录页（保留已存密码）",
-                    onClick = onCookieConfig,
-                    showDivider = false
-                )
+
+            }
+
+            InsetGroupedSection {
+                SettingsRow(icon = Icons.AutoMirrored.Filled.ExitToApp,
+                    iconTint = SemanticDanger,
+                    title = if (isDemoMode) "退出预览" else "退出登录",
+                    subtitle = if (isDemoMode) "返回登录页，保留真实账号与缓存" else "结束当前登录，保留已存账号",
+                    onClick = onLogout, showDivider = false)
             }
 
             InsetGroupedSection(Modifier.moduleEntrance(3), header = "外观") {
@@ -343,17 +340,6 @@ fun SettingsScreen(
                     subtitle = "释放本地存储空间",
                     onClick = onClearCache,
                     showDivider = false
-                )
-            }
-
-            InsetGroupedSection(Modifier.moduleEntrance(3)) {
-                InsetGroupedRow(
-                    title = "退出登录",
-                    icon = Icons.AutoMirrored.Filled.ExitToApp,
-                    iconTint = SemanticDanger,
-                    titleColor = SemanticDanger,
-                    showDivider = false,
-                    onClick = onLogout
                 )
             }
 

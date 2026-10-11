@@ -49,6 +49,63 @@ class PluginAcademicSessionTest {
         return op to PluginHost(op, app.cacheDir, access.cookies(grant)) { url, method, purpose, form -> access.requireRequest(grant, url, method, purpose, form) }
     }
 
+    private fun siteHost(a: PluginAcademicSession, caller: PluginPackage, grant: String): PluginHost {
+        val op = PluginOperation(a.session, caller.manifest, "host.effect", scopeStillActive = { a.requireGrant(grant); true })
+        return PluginHost(op, app.cacheDir, a.cookies(grant), sharedSite = { a.siteAuthorized() },
+            sharedApproval = a::requireReviewedReadOrConfirmation, sharedRequest = { url, method, purpose, form -> a.requireRequest(grant, url, method, purpose, form) })
+    }
+    @Test fun localSiteConsentAllowsTwentyRefreshesRawBodiesAndSameSiteRedirectsWithoutPrompts() {
+        val caller = pkg().copy(official = false)
+        val a = access(caller); val grant = a.authorizeSite(true).getString("grant")
+        var prompts = 0; a.confirmUnknownRequest = { _, _, _ -> prompts++; false }
+        val host = siteHost(a, caller, grant)
+        repeat(20) {
+            server.enqueue(MockResponse().setBody("updated")); server.enqueue(MockResponse().setBody("notice text"))
+            assertEquals("updated", host.call("http", request("/new/seen", "mutation").put("body", "{\"id\":1}")).getJSONObject("data").getString("body"))
+            assertEquals("notice text", host.call("http", request("/new/text")).getJSONObject("data").getString("body"))
+        }
+        server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/new/final")); server.enqueue(MockResponse().setBody("redirected"))
+        assertEquals("redirected", host.call("http", request("/new/text")).getJSONObject("data").getString("body"))
+        assertEquals(0, prompts); assertEquals(42, server.requestCount)
+    }
+    @Test fun siteConsentReopensAndRebindsButLocalPackageChangesAndRevocationDoNotInherit() {
+        val caller = pkg().copy(official = false)
+        val a = access(caller); val grant = a.authorizeSite(true).getString("grant")
+        assertTrue(access(caller).siteAuthorized())
+        user.saveCookieLogin("SYNTHETIC=renewed-login")
+        val reopened = access(caller); assertTrue(reopened.siteAuthorized())
+        assertNotEquals(grant, reopened.existingGrant())
+        assertThrows(PluginException::class.java) { a.requireGrant(grant) }
+        assertFalse(access(caller.copy(digest = "new-package")).siteAuthorized())
+        PluginAcademicSession.revoke(app, caller.manifest.id)
+        assertThrows(PluginException::class.java) { reopened.authorizeSite(true) }
+        assertFalse(access(caller).siteAuthorized())
+    }
+    @Test fun onceConsentCoversTheCurrentLoginSessionButNeverANewLogin() {
+        val caller = pkg().copy(official = false)
+        val a = access(caller); a.authorizeSite(false)
+        repeat(20) { assertTrue(access(caller).siteAuthorized()) }
+        user.saveCookieLogin("SYNTHETIC=new-login")
+        assertFalse(access(caller).siteAuthorized())
+    }
+    @Test fun siteScopeRejectsForeignOriginsEncodedPathsAndNeverPromotesLegacyConsent() {
+        val caller = pkg(); val a = access(caller)
+        a.authorize(remember = true); assertFalse(access(caller).siteAuthorized())
+        val grant = a.authorizeSite(true).getString("grant"); val host = siteHost(a, caller, grant)
+        for (request in listOf(request().put("url", "https://other-school.test/jw/read"), request("/jw/%2foutside")))
+            assertThrows(PluginException::class.java) { host.call("http", request) }
+        assertEquals(0, server.requestCount)
+    }
+    @Test fun siteTransportReusesConnectionsButNeverAcrossAccounts() {
+        val caller = pkg(); val a = access(caller); val grant = a.authorizeSite(true).getString("grant")
+        repeat(2) { server.enqueue(MockResponse().setBody("ok")); siteHost(a, caller, grant).call("http", request()) }
+        assertEquals(0, server.takeRequest().sequenceNumber); assertEquals(1, server.takeRequest().sequenceNumber)
+        user.studentId = "other-student"; user.saveCookieLogin("SYNTHETIC=other-login")
+        val b = access(caller); assertFalse(b.siteAuthorized()); val next = b.authorizeSite(true).getString("grant")
+        server.enqueue(MockResponse().setBody("ok")); siteHost(b, caller, next).call("http", request())
+        assertEquals(0, server.takeRequest().sequenceNumber)
+    }
+
     @Test fun differentAuthorsReuseOneLoginWithSeparateRevocableGrants() {
         val first = pkg(); val second = pkg("test.author.two", "Unrelated Author")
         val a = access(first); val b = access(second)

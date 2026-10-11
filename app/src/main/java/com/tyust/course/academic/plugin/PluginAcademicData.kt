@@ -39,11 +39,12 @@ class PluginAcademicData(private val app: Context, private val caller: PluginPac
         val value = input.optString("termId")
         return if (value.isBlank()) ScheduleCacheStore(cachePrefs).currentTerm(account, school!!.id) else AcademicTerm(value)
     }
-    private fun entry(item: AcademicScheduleEntry) = JSONObject().put("id", item.sourceId.ifBlank { PluginJson.sha256(item.toString().toByteArray()) })
+    private fun entry(item: AcademicScheduleEntry) = JSONObject().put("id", item.sourceId.ifBlank { ScheduleIdentity.network("", item.name, item.teacher, item.day, item.startPeriod, item.endPeriod, item.weeks, item.location) })
         .put("name", item.name).put("teacher", item.teacher).put("location", item.location)
+        .apply { if (item.details.isNotEmpty()) put("details", ScheduleDetails.json(item.details)) }
         .put("day", item.day).put("startPeriod", item.startPeriod).put("endPeriod", item.endPeriod).put("weeks", JSONArray(ScheduleWeeks.parse(item.weeks).weeks.toList()))
     private fun entries(term: AcademicTerm): JSONArray = JSONArray(ScheduleRepository(app).snapshot(account, school!!.id, term.id).courses.filterNot { it.custom }.map {
-        entry(AcademicScheduleEntry(it.name, it.teacher, it.location, it.day, it.startPeriod, it.endPeriod, it.weeks, it.id))
+        entry(AcademicScheduleEntry(it.name, it.teacher, it.location, it.day, it.startPeriod, it.endPeriod, it.weeks, it.id, it.details))
     })
     private fun currentRevision(term: AcademicTerm) = PluginJson.sha256(PluginJson.canonical(entries(term)).toByteArray())
     private fun <T> commit(action: () -> T): T = synchronized(user.sessionState) { synchronized(AcademicProviderRegistry) {
@@ -52,7 +53,7 @@ class PluginAcademicData(private val app: Context, private val caller: PluginPac
     } }
     private fun importedKey(term: AcademicTerm) = "plugin_import_entries:${account}_${school!!.id}_${term.id}"
     private fun courses(rows: JSONArray) = PluginJson.objects(rows).map { item -> AcademicScheduleEntry(item.getString("name"), item.optString("teacher"), item.optString("location"),
-        item.getInt("day"), item.getInt("startPeriod"), item.getInt("endPeriod"), (0 until item.getJSONArray("weeks").length()).joinToString(",") { item.getJSONArray("weeks").getInt(it).toString() }, item.getString("id")) }
+        item.getInt("day"), item.getInt("startPeriod"), item.getInt("endPeriod"), (0 until item.getJSONArray("weeks").length()).joinToString(",") { item.getJSONArray("weeks").getInt(it).toString() }, item.getString("id"), ScheduleDetails.fromEntry(item)) }
     private fun applyCalendar(term: AcademicTerm) {
         val key = "plugin_import_calendar:$scope/${term.id}"
         val calendar = cachePrefs.getString(key, null)?.let(::JSONObject) ?: return
@@ -72,7 +73,7 @@ class PluginAcademicData(private val app: Context, private val caller: PluginPac
             val reader = readerFactory(school!!, account, token)
             if (input.optString("termId").isBlank()) term = reader.catalog().currentTerm
             val remoteCourses = reader.schedule(term)
-            val calendar = reader.calendar(term)
+            val calendar = ScheduleCacheStore.optionalCalendar(reader, term)
             val grades = try { reader.grades(term) } catch (e: AcademicException) { if (e.status == AcademicStatus.UNSUPPORTED) null else throw e }
             checkActive()
             val rows = PluginScheduleImport.merge(JSONArray(remoteCourses.map(::entry)), JSONArray(cachePrefs.getString(importedKey(term), "[]"))).first
@@ -102,6 +103,10 @@ class PluginAcademicData(private val app: Context, private val caller: PluginPac
         schema.validate(schedule, JSONObject().put("$" + "ref", "#/$" + "defs/Schedule"))
         if (PluginJson.objects(schedule.getJSONArray("entries")).any { it.getInt("startPeriod") > it.getInt("endPeriod") })
             throw PluginException(PluginErrorCode.VALIDATION_FAILED, "课程开始节次不能晚于结束节次")
+        PluginJson.objects(schedule.getJSONArray("entries")).forEach {
+            if (it.has("details") && caller.manifest.json.optInt("minAppVersionCode", 0) < 96) throw PluginException(PluginErrorCode.UNSUPPORTED, "课程扩展字段需要声明 minAppVersionCode 96")
+            ScheduleDetails.fromEntry(it)
+        }
         val term = AcademicTerm(schedule.getString("termId"))
         input.optJSONObject("calendar")?.let { calendar ->
             schema.validate(calendar, JSONObject().put("$" + "ref", "#/$" + "defs/Calendar"))

@@ -1,5 +1,6 @@
 package com.tyust.course.academic.plugin
 
+import com.tyust.course.ui.system.SystemDialogButton
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -152,8 +153,8 @@ internal fun rememberServiceNativeActions(runtime: ServicePluginSession, onResul
                     "notification" -> "发送一条通知：\n${ticket.params.getString("title")}\n${ticket.params.getString("body")}"
                     else -> "打开系统日历编辑：\n${ticket.params.getString("title")}\n${ticket.params.getString("startAt")} — ${ticket.params.getString("endAt")}\n是否保存由你在日历中确认。"
                 }, style = MaterialTheme.typography.bodySmall)
-            } }, confirmButton = { TextButton({ launch(ticket) }, modifier = Modifier.testTag("service-native-allow")) { Text("允许一次") } },
-            dismissButton = { TextButton({ finish(ticket, "cancelled") }, modifier = Modifier.testTag("service-native-deny")) { Text("不允许") } })
+            } }, confirmButton = { SystemDialogButton(primary = true, onClick = { launch(ticket) }, modifier = Modifier.testTag("service-native-allow")) { Text("允许一次") } },
+            dismissButton = { SystemDialogButton(onClick = { finish(ticket, "cancelled") }, modifier = Modifier.testTag("service-native-deny")) { Text("不允许") } })
     }
     return controller
 }

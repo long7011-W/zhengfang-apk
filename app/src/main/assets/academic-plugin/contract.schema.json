@@ -13,6 +13,7 @@
     "study.grades": "Grades",
     "study.gradeDetails": "GradeDetails",
     "study.exams": "Exams",
+    "selection.filters": "SelectionFilters",
     "selection.catalog": "Rounds",
     "selection.courses": "Courses",
     "selection.sections": "Sections",
@@ -235,6 +236,42 @@
         }
       ]
     },
+    "ScheduleDetail": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "value": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "weeks": {
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 25
+          },
+          "maxItems": 25,
+          "minItems": 1,
+          "uniqueItems": true
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "value"
+      ],
+      "additionalProperties": false
+    },
     "ScheduleEntry": {
       "type": "object",
       "properties": {
@@ -253,6 +290,13 @@
         },
         "location": {
           "type": "string"
+        },
+        "details": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ScheduleDetail"
+          },
+          "maxItems": 32
         },
         "day": {
           "type": "integer",
@@ -484,6 +528,89 @@
       ],
       "additionalProperties": false
     },
+    "FilterOption": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "value",
+        "label"
+      ],
+      "additionalProperties": false
+    },
+    "FilterGroup": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "kind": {
+          "enum": [
+            "multi",
+            "text"
+          ]
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FilterOption"
+          },
+          "maxItems": 1000
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "kind",
+        "options"
+      ],
+      "additionalProperties": false
+    },
+    "SelectionFilters": {
+      "type": "object",
+      "properties": {
+        "roundId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "groups": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FilterGroup"
+          },
+          "maxItems": 32
+        }
+      },
+      "required": [
+        "roundId",
+        "revision",
+        "groups"
+      ],
+      "additionalProperties": false
+    },
     "Round": {
       "type": "object",
       "properties": {
@@ -542,6 +669,11 @@
         },
         "credits": {
           "type": "string"
+        },
+        "sectionCount": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000
         },
         "capacity": {
           "type": "integer",
@@ -2252,6 +2384,53 @@
             "event": {
               "type": "string",
               "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+            },
+            "variant": {
+              "type": "string",
+              "enum": [
+                "primary",
+                "secondary",
+                "plain"
+              ]
+            },
+            "size": {
+              "type": "string",
+              "enum": [
+                "regular",
+                "compact"
+              ]
+            },
+            "submission": {
+              "type": "object",
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "maxLength": 2048
+                },
+                "method": {
+                  "type": "string",
+                  "enum": [
+                    "GET",
+                    "POST"
+                  ]
+                },
+                "parameters": {
+                  "type": "object",
+                  "minProperties": 1,
+                  "maxProperties": 16,
+                  "additionalProperties": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 1024
+                  }
+                }
+              },
+              "required": [
+                "url",
+                "method",
+                "parameters"
+              ],
+              "additionalProperties": false
             }
           },
           "required": [
@@ -2259,6 +2438,248 @@
             "type",
             "label",
             "event"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "padding": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 64
+            },
+            "weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2000
+            },
+            "surface": {
+              "type": "string",
+              "enum": [
+                "none",
+                "glass",
+                "tonal"
+              ]
+            },
+            "tone": {
+              "type": "string",
+              "enum": [
+                "default",
+                "primary",
+                "positive",
+                "warning",
+                "error"
+              ]
+            },
+            "type": {
+              "const": "segmented"
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 200
+            },
+            "event": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+            },
+            "size": {
+              "type": "string",
+              "enum": [
+                "regular",
+                "compact"
+              ]
+            },
+            "options": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "value": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 24
+                  }
+                },
+                "required": [
+                  "value",
+                  "label"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 6,
+              "minItems": 2
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "value",
+            "event",
+            "options"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "padding": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 64
+            },
+            "weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2000
+            },
+            "surface": {
+              "type": "string",
+              "enum": [
+                "none",
+                "glass",
+                "tonal"
+              ]
+            },
+            "tone": {
+              "type": "string",
+              "enum": [
+                "default",
+                "primary",
+                "positive",
+                "warning",
+                "error"
+              ]
+            },
+            "type": {
+              "const": "listItem"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "subtitle": {
+              "type": "string",
+              "maxLength": 400
+            },
+            "detail": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "badge": {
+              "type": "string",
+              "maxLength": 24
+            },
+            "badgeTone": {
+              "type": "string",
+              "enum": [
+                "default",
+                "primary",
+                "positive",
+                "warning",
+                "error"
+              ]
+            },
+            "event": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+            },
+            "divider": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "title"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "padding": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 64
+            },
+            "weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2000
+            },
+            "surface": {
+              "type": "string",
+              "enum": [
+                "none",
+                "glass",
+                "tonal"
+              ]
+            },
+            "tone": {
+              "type": "string",
+              "enum": [
+                "default",
+                "primary",
+                "positive",
+                "warning",
+                "error"
+              ]
+            },
+            "type": {
+              "const": "badge"
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 24
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "text"
           ],
           "additionalProperties": false
         },
@@ -2333,6 +2754,75 @@
             "placeholder": {
               "type": "string",
               "maxLength": 160
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "label",
+            "value",
+            "event"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+            },
+            "enabled": {
+              "type": "boolean"
+            },
+            "padding": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 64
+            },
+            "weight": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 10
+            },
+            "height": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2000
+            },
+            "surface": {
+              "type": "string",
+              "enum": [
+                "none",
+                "glass",
+                "tonal"
+              ]
+            },
+            "tone": {
+              "type": "string",
+              "enum": [
+                "default",
+                "primary",
+                "positive",
+                "warning",
+                "error"
+              ]
+            },
+            "type": {
+              "const": "pattern"
+            },
+            "label": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 160
+            },
+            "value": {
+              "type": "string",
+              "pattern": "^[1-9]{0,9}$"
+            },
+            "event": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
             }
           },
           "required": [
@@ -2967,6 +3457,35 @@
       ],
       "additionalProperties": false
     },
+    "UiNavigation": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8
+        },
+        "backEvent": {
+          "type": "string",
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        }
+      },
+      "required": [
+        "key",
+        "title",
+        "depth"
+      ],
+      "additionalProperties": false
+    },
     "UiResult": {
       "type": "object",
       "properties": {
@@ -2980,6 +3499,9 @@
             "$ref": "#/$defs/UiEffect"
           },
           "maxItems": 8
+        },
+        "navigation": {
+          "$ref": "#/$defs/UiNavigation"
         }
       },
       "required": [
@@ -3496,6 +4018,42 @@
             },
             "data": {
               "$ref": "#/$defs/Exams"
+            }
+          },
+          "required": [
+            "ok",
+            "data"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "const": false
+            },
+            "error": {
+              "$ref": "#/$defs/Error"
+            }
+          },
+          "required": [
+            "ok",
+            "error"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "selection.filters": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "ok": {
+              "const": true
+            },
+            "data": {
+              "$ref": "#/$defs/SelectionFilters"
             }
           },
           "required": [

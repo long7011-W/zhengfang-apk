@@ -17,6 +17,8 @@ if (versionPropsFile.exists()) {
 
 def code = versionProps['VERSION_CODE'].toInteger()
 def name = versionProps['VERSION_NAME']
+// Optional phone-only preview; regular builds retain their existing ABI coverage.
+def compactPreview = providers.gradleProperty('compactPreview').map { it.toBoolean() }.getOrElse(false)
 def localSecrets = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 
@@ -79,6 +81,7 @@ android {
         targetSdk 34
         versionCode code
         versionName name
+        if (!isReleaseTask) { ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' } }
         buildConfigField "String", "FEEDBACK_SIGNING_SECRET", quoteForBuildConfig(feedbackSigningSecret)
         buildConfigField "boolean", "UI_PREVIEW", "false"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
@@ -92,6 +95,15 @@ android {
                 keyAlias releaseKeyAlias
                 keyPassword releaseKeyPassword
             }
+        }
+    }
+
+    splits {
+        abi {
+            enable isReleaseTask
+            reset()
+            include 'arm64-v8a', 'armeabi-v7a'
+            universalApk true
         }
     }
 
@@ -115,6 +127,11 @@ android {
             matchingFallbacks = ['debug']
             signingConfig signingConfigs.debug
             buildConfigField "boolean", "UI_PREVIEW", "true"
+            if (compactPreview) {
+                ndk { abiFilters 'arm64-v8a' }
+                minifyEnabled true
+                proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            }
         }
         benchmark {
             initWith release
@@ -127,6 +144,14 @@ android {
         }
     }
     testBuildType providers.gradleProperty('uiTestBuildType').getOrElse('debug')
+
+    packaging {
+        // Compress native libraries for release and debug as well as previews.
+        // Android extracts the device's libraries when installing the APK.
+        jniLibs.useLegacyPackaging = true
+        // AGP's universal split also includes dependency ABIs outside splits.include.
+        jniLibs.excludes += ['**/x86/**', '**/x86_64/**']
+    }
     
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
@@ -162,6 +187,10 @@ dependencies {
     implementation 'androidx.core:core-ktx:1.12.0'
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.webkit:webkit:1.14.0'
+    // Loaded only by the private browser process on API 26+. Android 7 keeps the base App.
+    implementation 'org.mozilla.geckoview:geckoview:157.0.20261005135250'
+    // The default 13.x artifact is Vulkan-only; MuMu Android 12 cannot create its surface.
+    implementation 'org.maplibre.gl:android-sdk-opengl:13.6.1'
     implementation 'androidx.activity:activity-compose:1.10.1'
     implementation 'androidx.core:core-splashscreen:1.2.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.9.1'
@@ -204,6 +233,7 @@ dependencies {
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0'
     implementation 'io.github.dokar3:quickjs-kt-android:1.0.15'
+    implementation 'com.microsoft.onnxruntime:onnxruntime-android:1.29.0'
     implementation 'com.journeyapps:zxing-android-embedded:4.3.0'
     
     // Modern UI & Animations

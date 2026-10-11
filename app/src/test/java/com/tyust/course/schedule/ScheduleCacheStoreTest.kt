@@ -102,7 +102,23 @@ class ScheduleCacheStoreTest {
         assertEquals(result.json, store(prefs).selected("a", "school", false)?.json)
     }
 
-    private class Reader(private val term: AcademicTerm) : AcademicStudyAdapter {
+    @Test fun unavailableOptionalCalendarMustNotDiscardSuccessfulCourses() = runTest {
+        val reader = object : Reader(current) {
+            override suspend fun calendar(term: AcademicTerm): org.json.JSONObject? = throw java.io.IOException("calendar unavailable")
+        }
+        val result = store(MemoryPreferences()).load("a", "school", false, true) { reader }
+        assertEquals(1, ScheduleJson.parse(result.json)!!.size)
+        assertNull(result.calendar)
+    }
+
+    @Test fun catalogMustNotInventAnUnlistedNextTerm() = runTest {
+        val reader = Reader(current)
+        val failure = runCatching { store(MemoryPreferences()).load("a", "school", true, true) { reader } }.exceptionOrNull()
+        assertTrue(failure is AcademicException)
+        assertEquals(0, reader.scheduleCalls)
+    }
+
+    private open class Reader(private val term: AcademicTerm) : AcademicStudyAdapter {
         var catalogCalls = 0
         var scheduleCalls = 0
         var fail = false

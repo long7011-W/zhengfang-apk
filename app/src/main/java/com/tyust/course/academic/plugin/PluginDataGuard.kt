@@ -12,16 +12,20 @@ class PluginDataGuard(app: Context, private val pkg: PluginPackage) {
     private val prefs = app.getSharedPreferences("plugin-data-security", Context.MODE_PRIVATE)
     private val id = pkg.manifest.id
     private val generation = prefs.getLong("generation:$id", 0L)
-    private val identity = PluginConsentPolicy.identity(pkg, "all-retained-accounts", "disclosure", null)
+    private val identity = PluginSiteConsent.owner(pkg, "all-retained-accounts", "disclosure", null)
     private fun origin(url: HttpUrl) = url.newBuilder().encodedPath("/").query(null).fragment(null).build().toString().removeSuffix("/")
     fun sensitive(): Boolean = prefs.getBoolean("label:$id", false) ||
         pkg.manifest.sharesAcademicSession || pkg.manifest.permissions.any { it in setOf("academic.read", "academic.session") }
     fun mark() = synchronized(lock) { check(prefs.edit().putBoolean("label:$id", true).commit()) }
     fun inherit(other: PluginDataGuard) { if (other.sensitive()) mark() }
-    private fun key(origin: String) = "grant:$id:$identity:" + PluginJson.sha256(origin.toByteArray())
+    private fun key(origin: String): String {
+        val rule = pkg.manifest.json.optJSONArray("dataDisclosure")?.let(PluginJson::objects)?.singleOrNull { it.optString("origin") == origin }
+        return "grant-v2:$id:$identity:" + PluginJson.sha256(PluginJson.canonical(rule ?: JSONObject().put("origin", origin)).toByteArray())
+    }
     fun declaration(url: HttpUrl): JSONObject? = pkg.manifest.json.optJSONArray("dataDisclosure")?.let(PluginJson::objects)
         ?.singleOrNull { it.optString("origin") == origin(url) &&
             "academic" in PluginJson.strings(it.optJSONArray("categories") ?: JSONArray()) }
+    fun requireCurrent() { if (prefs.getLong("generation:$id", 0L) != generation) denied() }
     fun allowed(url: HttpUrl): Boolean = !sensitive() || declaration(url) != null && prefs.getBoolean(key(origin(url)), false)
     fun authorize(url: HttpUrl) = synchronized(lock) {
         if (prefs.getLong("generation:$id", 0L) != generation || declaration(url) == null) denied()
@@ -33,6 +37,7 @@ class PluginDataGuard(app: Context, private val pkg: PluginPackage) {
     }
     fun untrack(operation: PluginOperation) = synchronized(lock) { active[id]?.remove(operation); Unit }
     fun requireNetwork(url: HttpUrl) {
+        requireCurrent()
         if (!allowed(url)) { audit("blocked", origin(url)); denied() }
         if (sensitive()) audit("disclosure", origin(url))
     }
@@ -44,7 +49,7 @@ class PluginDataGuard(app: Context, private val pkg: PluginPackage) {
         })).put("events", JSONArray(prefs.getString("events:$id", "[]")))
     fun revoke() = synchronized(lock) {
         val edit = prefs.edit()
-        prefs.all.keys.filter { it.startsWith("grant:$id:") }.forEach(edit::remove)
+        prefs.all.keys.filter { (it.startsWith("grant:$id:") || it.startsWith("grant-v2:$id:")) }.forEach(edit::remove)
         edit.putLong("generation:$id", prefs.getLong("generation:$id", 0L) + 1)
         check(edit.commit()) // The data label deliberately survives revocation.
         active.remove(id)?.forEach(PluginOperation::close)
@@ -61,7 +66,7 @@ class PluginDataGuard(app: Context, private val pkg: PluginPackage) {
         fun revoke(app: Context, id: String) = synchronized(lock) {
             val prefs = app.getSharedPreferences("plugin-data-security", Context.MODE_PRIVATE)
             val edit = prefs.edit()
-            prefs.all.keys.filter { it.startsWith("grant:$id:") }.forEach(edit::remove)
+            prefs.all.keys.filter { (it.startsWith("grant:$id:") || it.startsWith("grant-v2:$id:")) }.forEach(edit::remove)
             check(edit.putLong("generation:$id", prefs.getLong("generation:$id", 0L) + 1).commit())
             active.remove(id)?.forEach(PluginOperation::close)
         }

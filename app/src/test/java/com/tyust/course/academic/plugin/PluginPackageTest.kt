@@ -54,4 +54,19 @@ class PluginPackageTest {
             PluginPackageVerifier.read(zip(mapOf("manifest.json" to manifest.toString().toByteArray(), "index.js" to "tampered".toByteArray())), schema, emptyMap(), true)
         }
     }
+
+    @Test fun optionalGradeFormatAndFiltersRequire97WithoutBreakingOldSelectionGroup() {
+        val packages = BundledAcademicProviders.load { File("src/main/assets", it).readBytes() }
+        val current = packages.getValue("org.zf.protocol.zf").manifest
+        current.validate(schema)
+        assertEquals("academic-year-semester", current.json.getJSONObject("studyOptions").getString("gradeTermFormat"))
+        assertTrue("selection.filters" in current.capabilities)
+        rejected(PluginErrorCode.VALIDATION_FAILED) {
+            PluginManifest(JSONObject(current.json.toString()).put("minAppVersionCode",96)).validate(schema)
+        }
+        val old = JSONObject(current.json.toString()).put("minAppVersionCode",87)
+            .put("capabilities",org.json.JSONArray(current.capabilities - "selection.filters"))
+        old.remove("studyOptions")
+        PluginManifest(old).validate(schema)
+    }
 }

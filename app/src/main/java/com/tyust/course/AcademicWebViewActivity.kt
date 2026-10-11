@@ -81,6 +81,7 @@ class AcademicWebViewActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyAdaptiveOrientation()
         startUrl = intent.getStringExtra(EXTRA_START_URL).orEmpty()
         cookieUrl = intent.getStringExtra(EXTRA_COOKIE_URL).orEmpty().ifBlank { startUrl }
         val keyword = intent.getStringExtra(EXTRA_SEARCH_KEYWORD).orEmpty()

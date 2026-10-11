@@ -64,8 +64,12 @@ internal data class GlassLensCaptureFrame(
     val generation: Int,
     val geometry: GlassLensCaptureGeometry,
     val node: RenderNode,
-    val queuedAtNanos: Long = 0L
-)
+    val queuedAtNanos: Long = 0L,
+    val sourceRevision: Int = 0,
+    val overlayRevision: Int = 0
+) {
+    val identity get() = GlassLensFrameIdentity(geometry, overlayRevision)
+}
 
 /** Freezes glyph draw commands while their Compose draw nodes are still attached. */
 internal class GlassLensContentSnapshot {
@@ -98,6 +102,7 @@ internal class GlassLensContentSnapshot {
 
 /** Optional instrumentation observers; production never retains source pixels here. */
 internal object GlassLensCaptureObserver {
+    var onGlyphRevision: ((Int) -> Unit)? = null
     var onCaptured: ((String, GlassLensCaptureFrame, Bitmap) -> Unit)? = null
     var onSampled: ((String, IntSize, Offset, GlassLensSourceAxes, Int) -> Unit)? = null
     @Volatile var onTiming: ((String, String, Long) -> Unit)? = null

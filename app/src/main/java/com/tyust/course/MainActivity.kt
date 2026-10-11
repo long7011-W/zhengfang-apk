@@ -144,7 +144,6 @@ import com.tyust.course.ui.system.SystemSecondaryButton
 import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import com.tyust.course.manager.StartupPage
-import com.tyust.course.manager.StartupPagePreferences
 import com.tyust.course.ui.system.GlassRecipe
 import com.tyust.course.ui.system.glass.drawBlurred
 
@@ -161,10 +160,11 @@ class MainActivity : FragmentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         com.tyust.course.ui.theme.StartupLogoAnimation.install(this)
         super.onCreate(savedInstanceState)
+        applyAdaptiveOrientation()
 
         UserManager.getInstance().init(this)
         PluginPages.refresh()
-        intent.getStringExtra("pageId")?.let { if (PluginPages.registry.page(it) != null) PluginPages.requested.value = it }
+        PluginPages.accept(intent, restoring = savedInstanceState != null)
         if (savedInstanceState == null) com.tyust.course.schedule.CourseReminderNavigation.accept(intent)
         if (savedInstanceState == null) com.tyust.course.schedule.ScheduleWidgetNavigation.accept(intent)
 
@@ -223,7 +223,7 @@ class MainActivity : FragmentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        intent.getStringExtra("pageId")?.let { if (PluginPages.registry.page(it) != null) PluginPages.requested.value = it }
+        PluginPages.accept(intent)
         com.tyust.course.schedule.CourseReminderNavigation.accept(intent)
         com.tyust.course.schedule.ScheduleWidgetNavigation.accept(intent)
     }
@@ -254,7 +254,6 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val appWallpaper = com.tyust.course.ui.theme.rememberAppWallpaperStyle()
     val isDemoMode = remember { UserManager.getInstance().isDemoMode }
     val prefs = remember { context.getSharedPreferences("app_prefs", android.content.Context.MODE_PRIVATE) }
-    val startupPagePreferences = remember(context) { StartupPagePreferences.from(context) }
     val pageRevision by PluginPages.revision.collectAsState()
     val registeredPages = remember(pageRevision) { PluginPages.registry.pages() }
     val routes = registeredPages.map { it.id }
@@ -284,7 +283,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     // Resolve before creating the motion state so the first frame is already on the chosen page.
     var selectedPage by remember(pageData) {
         pageData.state("navigation.page") {
-            PluginPages.registry.startup("app.${startupPagePreferences.read().route}")
+            PluginPages.registry.startup()
         }
     }
     var pageHistory by remember(pageData) { pageData.state("navigation.history") { emptyList<String>() } }
@@ -297,7 +296,11 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
     val navigationMotion = com.tyust.course.ui.theme.rememberNavigationMotionState(selectedTab, currentAccountStorageKey + routes.joinToString(), accessibility.reduceMotion)
     val barMotion = com.tyust.course.ui.theme.rememberNavigationMotionState(selectedNavigationIndex, currentAccountStorageKey + items.joinToString { it.route }, accessibility.reduceMotion)
     val pageRequest by PluginPages.requested.collectAsState()
-    LaunchedEffect(pageRequest) { pageRequest?.let { openPage(it); PluginPages.requested.value = null } }
+    LaunchedEffect(pageRequest) { pageRequest?.let {
+        pageParameters = pageParameters + (it.route to it.params)
+        openPage(it.route)
+        PluginPages.consume(it)
+    } }
     LaunchedEffect(pageRevision, currentAccountStorageKey) {
         if (PluginPages.registry.page(selectedPage) == null) selectedPage = PluginPages.registry.fallback()
         pageHistory = pageHistory.filter { PluginPages.registry.page(it) != null }
@@ -463,12 +466,12 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             null
         }
 
-        // 底栏位于该层外，只能单向采样壁纸与页面内容。
-        val navBarBackdrop = if (useGlass) {
-            rememberLayerBackdrop()
-        } else {
-            null
-        }
+        // WebView is excluded for the entire navigation overlap, including an outgoing
+        // web page. Glass chrome uses wallpaper; no Chromium display lists are replayed.
+        val webContentPresent = (navigationMotion.pages.keys.mapNotNull { routes.getOrNull(it) } + selectedPage)
+            .any { route -> registeredPages.any { it.id == route && it.renderer == "web" } }
+        val capturedPageBackdrop = if (useGlass && !webContentPresent) rememberLayerBackdrop() else null
+        val navBarBackdrop = capturedPageBackdrop ?: wallpaperBackdrop
 
         // 顶栏把底边写进这里，通知覆盖层据此落位，避免压住顶栏按钮
         val noticeAnchorState = remember { NoticeAnchorState() }
@@ -521,7 +524,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         val modalLensAnchor = if (navBarBackdrop != null) {
             com.tyust.course.ui.system.glass.rememberGlassLensRegion(
                 tag = "app-modal",
-                keys = arrayOf(selectedTab, session.token, dialogHostState.currentDialog),
+                keys = arrayOf(selectedTab, session.token, dialogHostState.currentDialog, navBarBackdrop),
                 freshness = lensFreshness,
                 // 壁纸同上，由锚点自己盯
                 drawSource = { coords ->
@@ -542,6 +545,13 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
             LocalDialogHost provides dialogHostState,
             LocalPageDataState provides pageData,
             LocalFloatingNotice provides tokenExpiredNotice,
+            com.tyust.course.ui.system.LocalRequestSessionRecovery provides { expected ->
+                if (sessionStore.isCurrent(expected)) {
+                    com.tyust.course.network.CourseApiClient.getInstance().notifyCookieExpired(expected)
+                    if (sessionStore.state.value.expired && recovery.token == expected && recovery.phase == RecoveryPhase.NeedsLogin)
+                        noticeModel.notices.request(expected)
+                }
+            },
             LocalNoticeAnchor provides noticeAnchorState,
             com.tyust.course.ui.system.glass.LocalPageGlassFreshness provides lensFreshness,
             com.tyust.course.ui.system.glass.LocalGlassLensAnchor provides appLensAnchor,
@@ -549,7 +559,7 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
         ) {
             Box(
                 modifier = Modifier.fillMaxSize().then(
-                    if (useGlass && navBarBackdrop != null) Modifier.layerBackdrop(navBarBackdrop)
+                    if (capturedPageBackdrop != null) Modifier.layerBackdrop(capturedPageBackdrop)
                     else Modifier
                 ).then(
                     // 全局折射区域的取景框：全屏。控件的采样点会跑到自己轮廓之外，
@@ -605,10 +615,31 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                                 }
                             ) { page ->
                               val route = routes.getOrElse(page) { PluginPages.registry.fallback() }
+                              val academicPage = route in setOf("app.courses", "app.grab", "app.grades", "app.schedule")
                               savedPages.SaveableStateProvider(route) {
+                                 com.tyust.course.ui.system.InitialPageLoad(
+                                    // Local settings/service pages need no provider preparation.
+                                    // Preference writes must not tear down their dialog or scroll state.
+                                    key = com.tyust.course.schedule.schedulePageEntryKey(route, currentAccountStorageKey, session.token.toString(), if (academicPage) pageRevision else 0L),
+                                    title = registeredPages.firstOrNull { it.id == route }?.title.orEmpty(),
+                                    active = selectedPage == route,
+                                    transitionFinished = navigationMotion.transitionFinished,
+                                    route = route,
+                                    awaitContent = route in setOf("app.courses", "app.grades", "app.schedule"),
+                                    prepare = {
+                                        if (!isDemoMode && academicPage) UserManager.getInstance().currentSchool?.let { school ->
+                                            // Resolve and hash immutable generic protocol material off the UI thread.
+                                            com.tyust.course.academic.plugin.AcademicProviderRegistry.operationProvider(school, when (route) {
+                                                "app.grades" -> "study.grades"
+                                                "app.schedule" -> "study.schedule"
+                                                else -> "selection.courses"
+                                            })
+                                        }
+                                    }
+                                ) {
                                 com.tyust.course.academic.plugin.ServiceExtensionHost(when (route) { "app.courses" -> "home"; "app.schedule" -> "schedule"; "app.grades" -> "grades"; else -> null }) {
                                 when (route) {
-                                    "app.courses" -> com.tyust.course.ui.route.CourseListRoute()
+                                    "app.courses" -> com.tyust.course.ui.route.CourseListRoute(isActive = selectedPage == route)
                                     "app.schedule" -> com.tyust.course.ui.route.ScheduleRoute(isActive = selectedPage == route)
                                     "app.grab" -> com.tyust.course.ui.route.GrabProRoute()
                                     "app.grades" -> com.tyust.course.ui.route.GradesRoute()
@@ -617,7 +648,10 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                                         surveyUnreadCount = surveyFeed.unreadCount(System.currentTimeMillis())
                                     )
                                     "app.services" -> com.tyust.course.academic.plugin.ExtensionCenterContent(onOpen = { openPage(it) })
-                                    else -> com.tyust.course.academic.plugin.PluginPageContent(route, onNavigate = { next, params -> pageParameters = pageParameters + (next to params.toString()); openPage(next) }, onBack = { backPage() }, params = org.json.JSONObject(pageParameters[route] ?: "{}"))
+                                    else -> Box(Modifier.fillMaxSize().statusBarsPadding().padding(bottom = com.tyust.course.ui.system.LocalAppOverlayBottomInset.current)) {
+                                        com.tyust.course.academic.plugin.PluginPageContent(route, onNavigate = { next, params -> pageParameters = pageParameters + (next to params.toString()); openPage(next) }, onBack = { backPage() }, params = org.json.JSONObject(pageParameters[route] ?: "{}"))
+                                    }
+                                }
                                 }
                                 }
                               }
@@ -677,15 +711,8 @@ fun MainScreen(fragmentActivity: FragmentActivity) {
                 onOpen = { id -> initialSurveyId = id; showSurveyCenter = true }
             )
 
-            if (!session.expired && updateState.showDialog() && updateInfo != null) {
-                UpdateDialog(
-                    updateInfo = updateInfo,
-                    currentVersion = updateState.getCurrentVersion(),
-                    onDismiss = { updateState.dismiss() },
-                    onUpdate = { updateState.startDownload() },
-                    downloadProgress = updateState.downloadProgress(),
-                    isDownloading = updateState.isDownloading()
-                )
+            if (!session.expired && updateState.showDialog()) {
+                UpdateDialog(onDismiss = { updateState.dismiss() })
             }
 
             if (sessionNotice.token == session.token && sessionNotice.visible && isTokenExpired) {

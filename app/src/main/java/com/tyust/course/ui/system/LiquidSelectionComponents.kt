@@ -1,5 +1,7 @@
 package com.tyust.course.ui.system
 
+import androidx.compose.ui.platform.testTag
+
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.drawscope.scale
 
@@ -54,6 +56,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
@@ -70,11 +73,13 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp as lerpColor
@@ -168,7 +173,6 @@ private val PickerCornerRadius = 20.dp
 private val PickerExpandedGap = 12.dp
 private val PickerOpeningOverlap = 16.dp
 private val PickerClosingOverlap = 24.dp
-private const val PickerItemStaggerSeconds = 0.018f
 private val PickerItemEasing = CubicBezierEasing(0.16f, 1f, 0.3f, 1f)
 private const val PickerCircleBezier = 0.5522848f
 
@@ -344,7 +348,7 @@ private fun PickerLensLayer(
     val surfaceColor = if (popupSurface) wallpaperSurface.copy(
         // 菜单行铺在触发器采样范围之外的壁纸上，那里的明暗不受这次色调映射保证。
         alpha = if (customWallpaper) maxOf(wallpaperSurface.alpha, ReadableAnyBackdropAlpha)
-        else modalSurfaceAlpha(!isLightTheme, accessibility.highContrast)
+        else dropdownSurfaceAlpha(!isLightTheme, accessibility.highContrast)
     ) else if (customWallpaper) wallpaperSurface
     else Color.White.copy(alpha = surfaceAlpha)
 
@@ -436,11 +440,14 @@ fun LiquidSegmentedControl(
     restingRefraction: Float? = null,
     showTrack: Boolean = true,
     refractLabels: Boolean = true,
+    stableLabelRefraction: Boolean = false,
     labelContent: (@Composable (index: Int, selection: Float, color: Color) -> Unit)? = null
 ) {
     if (options.isEmpty()) return
 
     val optionCount = options.size
+    val stableLabels = remember(options) { com.tyust.course.ui.system.glass.SegmentLabelSource(options.size) }
+    var stableCoordinates by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
     val clampedSelectedIndex = selectedIndex.coerceIn(0, optionCount - 1)
     val glassBackdrop = backdrop?.takeIf { isBackdropSupported() }
     val useGlass = glassBackdrop != null
@@ -458,7 +465,8 @@ fun LiquidSegmentedControl(
     // Animated date labels stay live above the lens. Other controls keep labels
     // in a small optical overlay, independent of the more expensive page background.
     val segmentLabelsSnapshot = remember { GlassLensContentSnapshot() }
-    val segmentsBackdrop = rememberLayerBackdrop(onDraw = { segmentLabelsSnapshot.draw(this) })
+    val segmentsBackdrop = if (refractLabels) rememberLayerBackdrop(onDraw = { segmentLabelsSnapshot.draw(this) }) else null
+    val indicatorDrawState = remember { com.tyust.course.ui.system.glass.GlassLensDrawState() }
     val animationScope = rememberCoroutineScope()
     val accessibility = rememberGlassAccessibilityMode()
     val trackMaterial = GlassMaterials.resolve(
@@ -491,6 +499,7 @@ fun LiquidSegmentedControl(
                 clip = false
             }
             .glassLensAnchor(segLensAnchor)
+            .onGloballyPositioned { stableCoordinates = it; stableLabels.resize(it.size) }
     ) {
         val density = LocalDensity.current
         val compact = height <= 36.dp
@@ -579,35 +588,75 @@ fun LiquidSegmentedControl(
             }
         )
         val indicatorHeight = (height - verticalPadding * 2).coerceAtLeast(1.dp)
-        val indicatorBackdrop = if (glassBackdrop != null && refractLabels) {
-            rememberCombinedBackdrop(glassBackdrop, segmentsBackdrop)
+        val materialBackdrop = if (!refractLabels && glassBackdrop != null)
+            com.tyust.course.ui.system.glass.SegmentMaterialSource(glassBackdrop, trackBackgroundColor)
+        else glassBackdrop
+        val stableOptics = stableLabelRefraction && labelContent == null && useGlass && !accessibility.highContrast
+        val indicatorBackdrop = if (materialBackdrop != null && stableOptics) {
+            // Like the course tabs, disperse the composited material + tinted glyphs.
+            // Dispersing a transparent glyph texture separately mixes empty RGB with
+            // glyph coverage and creates dark/primary-colour fragments at the rim.
+            com.tyust.course.ui.system.glass.SegmentRefractionSource(materialBackdrop, stableLabels,
+                if (enabled) accent else palette.onSurface.copy(alpha = .38f))
+        } else if (materialBackdrop != null && segmentsBackdrop != null) {
+            rememberCombinedBackdrop(materialBackdrop, segmentsBackdrop)
         } else {
-            glassBackdrop
+            materialBackdrop
+        }
+
+        fun textFrameReady(): Boolean {
+            stableLabels.revision // Redraw the mask after fonts/layout change.
+            // Both the optical frame and its synchronous backdrop fallback now
+            // contain tinted glyphs. Leaving ordinary text inside the fallback
+            // would paint the original colour over it a second time.
+            return stableOptics && stableLabels.ready
+        }
+        val textMask: androidx.compose.ui.graphics.drawscope.ContentDrawScope.() -> Unit = {
+            val contentScope = this
+            if (!textFrameReady()) drawContent() else {
+                val t = segIndicatorScale(dragAnimation)
+                val left = horizontalPaddingPx + dragAnimation.value * segmentWidthPx
+                val top = verticalPadding.toPx()
+                val w = segmentWidthPx; val h = indicatorHeight.toPx()
+                val rect = androidx.compose.ui.geometry.Rect(left + (w - w*t.scaleX)/2f, top + (h - h*t.scaleY)/2f,
+                    left + (w + w*t.scaleX)/2f, top + (h + h*t.scaleY)/2f)
+                val mask = Path().apply { addRoundRect(androidx.compose.ui.geometry.RoundRect(rect,
+                    androidx.compose.ui.geometry.CornerRadius(h*t.scaleX/2f, h*t.scaleY/2f))) }
+                clipPath(mask, androidx.compose.ui.graphics.ClipOp.Difference) { contentScope.drawContent() }
+            }
         }
 
         // API 31/32：平台没有 AGSL，改用离屏 ES 2.0 做真折射（见 GlassLens.kt）。
         // 结构与 CapsuleNavigationBar 一致：锚点挂在**不随滑块移动**的外层，
         // 底图上传一次，滑块滑动时只改采样窗口。
-        // The background stays sharp; the separate label overlay keeps real text
-        // refraction without rereading the page whenever a glyph changes.
+        // Cache material and immutable glyphs separately, then composite them BEFORE
+        // a single optical pass, matching the course tabs on both platform paths.
         val lensDensity = LocalDensity.current
         val lensAnchor = if (glassBackdrop != null) {
             // 标签带上选项文字：屏幕上同时有多个分段控件，且尺寸可能相同
             // （登录页的「密码登录/Cookie登录」与课程页的「可选/已选」都是 381x126），
             // 只按尺寸命名会互相覆盖。
-            rememberGlassLensRegion("seg-" + options.joinToString("_"), isLightTheme, refractLabels,
+            rememberGlassLensRegion("seg-" + options.joinToString("_"), isLightTheme, refractLabels, glassBackdrop,
+                stableOptics, if (stableOptics) accent else null, enabled,
                 freshness = LocalPageGlassFreshness.current,
                 rasterizeOverlayOnCpu = true,
-                overlaySource = { coords ->
-                    if (refractLabels) segmentLabelsSnapshot.draw(this, coords)
+                overlaySource = when {
+                    stableOptics -> ({ _ -> stableLabels.draw(this,
+                        if (enabled) accent else palette.onSurface.copy(alpha = .38f)) })
+                    refractLabels -> ({ coords -> segmentLabelsSnapshot.draw(this, coords) })
+                    else -> null
                 }) { coords ->
-                with(glassBackdrop) { drawBackdrop(lensDensity, coords, null) }
+                with(requireNotNull(materialBackdrop)) { drawBackdrop(lensDensity, coords, null) }
             }
         } else {
             null
         }
         // 把锚点交给外层的 glassLensAnchor（它需要外层那块不动的坐标）
-        SideEffect { segLensAnchor = lensAnchor }
+        SideEffect {
+            lensAnchor?.requireCurrentSource = !refractLabels
+            lensAnchor?.retainCompatibleBackground = stableOptics
+            segLensAnchor = lensAnchor
+        }
         // The region refreshes both after selection and after the underlying page settles.
 
         // One visible label row owns gestures and semantics on every API level.
@@ -615,6 +664,7 @@ fun LiquidSegmentedControl(
         Row(
             modifier = Modifier
                 .fillMaxSize()
+                .drawWithContent(textMask)
                 .selectableGroup()
                 .padding(horizontal = horizontalPadding, vertical = verticalPadding)
                 .pointerInput(enabled, optionCount, segmentWidthPx) {
@@ -716,16 +766,33 @@ fun LiquidSegmentedControl(
                         .then(if (labelContent != null) Modifier.semantics { contentDescription = label } else Modifier),
                     contentAlignment = Alignment.Center
                 ) {
+                    var glyphLayout by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+                    var glyphCoordinates by remember { mutableStateOf<androidx.compose.ui.layout.LayoutCoordinates?>(null) }
+                    fun updateGlyph() {
+                        val parent = stableCoordinates; val child = glyphCoordinates; val layout = glyphLayout
+                        if (stableOptics && parent?.isAttached == true && child?.isAttached == true && layout != null) {
+                            val before = stableLabels.revision
+                            stableLabels.update(index, layout, parent.localPositionOf(child))
+                            if (before != stableLabels.revision) {
+                                lensAnchor?.invalidateOverlay()
+                            }
+                        }
+                    }
+                    SideEffect { updateGlyph() }
                     if (labelContent != null) labelContent(index, selectionAmount, textColor)
                     else Text(
                         text = label,
-                        modifier = Modifier.padding(horizontal = if (compact) 6.dp else 10.dp),
+                        modifier = Modifier.padding(horizontal = if (compact) 6.dp else 10.dp)
+                            .onGloballyPositioned { glyphCoordinates = it; updateGlyph() },
+                        onTextLayout = { glyphLayout = it; updateGlyph() },
                         style = if (compact) {
                             MaterialTheme.typography.labelMedium
                         } else {
                             MaterialTheme.typography.labelLarge
                         },
-                        fontWeight = if (selectionAmount >= 0.55f) {
+                        // A partial drag changes paint/optics, not glyph geometry.
+                        // Commit font weight once the user actually selects a tab.
+                        fontWeight = if (if (stableOptics) index == clampedSelectedIndex else selectionAmount >= 0.55f) {
                             FontWeight.ExtraBold
                         } else {
                             FontWeight.SemiBold
@@ -808,6 +875,11 @@ fun LiquidSegmentedControl(
                                     drawRoundRect(fallbackIndicatorColor, Offset(left, top),
                                         androidx.compose.ui.geometry.Size(w, h),
                                         androidx.compose.ui.geometry.CornerRadius(h / 2f))
+                                    if (!refractLabels) drawRoundRect(
+                                        palette.onSurface.copy(alpha = if (accessibility.highContrast) .65f else .18f),
+                                        Offset(left, top), androidx.compose.ui.geometry.Size(w, h),
+                                        androidx.compose.ui.geometry.CornerRadius(h / 2f),
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(.75.dp.toPx()))
                                 }
                             }
                     }
@@ -826,7 +898,7 @@ fun LiquidSegmentedControl(
             }
 
         if (glassBackdrop != null && indicatorBackdrop != null) {
-            if (refractLabels) {
+            if (segmentsBackdrop != null) {
             // 专供滑块折射采样的隐藏层：染成主色后，透镜里浮出的就是饱和蓝字，
             // 滑块表面因此可以做到几乎透明，不必靠白色填充去制造存在感。
             val labelTint = ColorFilter.tint(if (enabled) accent else palette.onSurface.copy(alpha = 0.38f))
@@ -877,6 +949,7 @@ fun LiquidSegmentedControl(
 
             Box(
                 modifier = indicatorBaseModifier
+                    .testTag("segment-background-lens")
                     // API31/32 真折射：画在 drawBackdrop 之前，所以它提供背景，
                     // 库那层的 surface / highlight / shadow 仍叠在上面。
                     .glassLens(
@@ -907,7 +980,8 @@ fun LiquidSegmentedControl(
                         // 与下面 layerBlock **同一份**形变。不传的话按下时库的
                         // highlight 环按放大后的轮廓画，而折射还是原尺寸，
                         // 屏幕上是一圈白环浮在玻璃外面。
-                        scale = { _, _ -> segIndicatorScale(dragAnimation) }
+                        scale = { _, _ -> segIndicatorScale(dragAnimation) },
+                        drawState = indicatorDrawState
                     )
                     .drawBackdrop(
                     backdrop = indicatorBackdrop,
@@ -1007,7 +1081,7 @@ fun LiquidSegmentedControl(
                     },
                     onDrawBackdrop = { drawBackdrop ->
                         // API31/32 上背景已由 glassLens 以折射方式画过，不能再画一遍
-                        if (lensAnchor == null) drawBackdrop()
+                        if (lensAnchor == null || !indicatorDrawState.hasBackground) drawBackdrop()
                     },
                     onDrawSurface = {
                         val press = dragAnimation.pressProgress
@@ -1019,7 +1093,9 @@ fun LiquidSegmentedControl(
                         // 轨道明显割裂（已在设备上截图确认）。
                         // 已在 API 35 上截库同一个控件对照：它是白色 0.18 的提亮，
                         // 滑块比轨道更亮更粉，而不是更暗。
-                        if (readableBacking) {
+                        if (stableLabelRefraction) {
+                            drawRect((if (isLightTheme) Color.White else Color.Black).copy(alpha = .08f + press * .04f))
+                        } else if (readableBacking) {
                             // The lens shows the wallpaper without the track's backing, so the
                             // selected label needs the same tone-mapped backing of its own.
                             val restAlpha = if (isLightTheme) {
@@ -1103,7 +1179,9 @@ fun LiquidPicker(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
     backdrop: Backdrop? = LocalControlBackdrop.current,
-    maxLabelLines: Int = 1
+    maxLabelLines: Int = 1,
+    maxSelectedLabelLines: Int = maxLabelLines,
+    popupWidth: Dp? = null
 ) {
     var expanded by remember { mutableStateOf(false) }
     var actionPending by remember { mutableStateOf(false) }
@@ -1131,9 +1209,11 @@ fun LiquidPicker(
     val headerPressed by headerInteraction.collectIsPressedAsState()
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
+    var anchorWidth by remember { mutableStateOf(0.dp) }
     val labelLines = maxLabelLines.coerceIn(1, 3)
+    val selectedLabelLines = maxSelectedLabelLines.coerceIn(1, 3)
     val headerHeight = maxOf(PickerHeaderHeight,
-        with(density) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() } * labelLines.toFloat() + 16.dp)
+        with(density) { MaterialTheme.typography.bodyLarge.lineHeight.toDp() } * selectedLabelLines.toFloat() + 16.dp)
     val itemHeight = maxOf(PickerItemHeight, 48.dp,
         with(density) { MaterialTheme.typography.bodyMedium.lineHeight.toDp() } * labelLines.toFloat() + 16.dp)
 
@@ -1145,6 +1225,8 @@ fun LiquidPicker(
             PickerItemGap * (rowCount - 1).toFloat()
     }
     val bodyHeight = minOf(bodyContentHeight, PickerMaxBodyHeight, portalBodySpace)
+    var openingFirstRow by remember { mutableIntStateOf(0) }
+    val openingRowCount = kotlin.math.ceil((bodyHeight / (itemHeight + PickerItemGap)).toDouble()).toInt() + 1
     val motion = remember { PickerMotionState(initialPosition = 0f) }
     LaunchedEffect(expanded, reduceMotion) {
         motion.animateTo(
@@ -1255,18 +1337,8 @@ fun LiquidPicker(
         smoothStep((heightProgress - 0.02f) / 0.12f)
     }
     fun rowRevealProgress(index: Int): Float {
-        if (reduceMotion) return if (expanded) 1f else 0f
-        return if (expanded) {
-            val timed = smoothStep(
-                (motionTimeSeconds - 0.22f - index * PickerItemStaggerSeconds) / 0.20f
-            )
-            val containerReady = smoothStep((settledProgress - 0.50f) / 0.34f)
-            minOf(timed, containerReady)
-        } else {
-            // Closing is driven by geometry, not a reverse authored cascade. The body clip removes
-            // rows from bottom to top while the remaining content stays legible until absorption.
-            smoothStep((heightProgress - 0.015f) / 0.11f)
-        }
+        return pickerRowReveal(index, openingFirstRow, openingRowCount, expanded,
+            motion.isSettled, reduceMotion, motionTimeSeconds, settledProgress, heightProgress)
     }
 
     LaunchedEffect(canOpen) {
@@ -1290,6 +1362,7 @@ fun LiquidPicker(
                 val centered = rowTop - (viewport - itemHeight) / 2
                 scrollState.scrollTo(centered.coerceIn(0, scrollState.maxValue))
             }
+            openingFirstRow = (scrollState.value / with(density) { (itemHeight + PickerItemGap).toPx() }).toInt()
         }
     }
     BackHandler(enabled = expanded) { expanded = false }
@@ -1425,7 +1498,14 @@ fun LiquidPicker(
             portalBodySpace = with(density) { space.toDp() }
             portalOpensUp = up
         },
-        modifier = modifier.fillMaxWidth()
+        modifier = modifier.fillMaxWidth().onGloballyPositioned {
+            anchorWidth = with(density) { it.size.width.toDp() }
+        },
+        popupWidth = popupWidth?.let { width ->
+            val start = anchorWidth.takeIf { it > 0.dp } ?: width
+            // Use the existing motion so a compact trigger grows into the full readable menu.
+            start + (maxOf(start, width) - start) * smoothStep(settledProgress)
+        }
     ) {
     ProvideWallpaperAppearance(appearance) {
     Box(
@@ -1636,7 +1716,7 @@ fun LiquidPicker(
                             primaryContentColor
                         },
                         textAlign = if (descriptorPresent) TextAlign.End else TextAlign.Start,
-                        maxLines = labelLines,
+                        maxLines = selectedLabelLines,
                         overflow = TextOverflow.Ellipsis
                     )
                 }

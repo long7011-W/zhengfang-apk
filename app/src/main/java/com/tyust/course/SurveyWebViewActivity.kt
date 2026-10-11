@@ -66,6 +66,7 @@ class SurveyWebViewActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyAdaptiveOrientation()
         questionnaireUrl = intent.getStringExtra(EXTRA_URL).orEmpty()
         surveyTitle = intent.getStringExtra(EXTRA_TITLE).orEmpty().ifBlank { "问卷填写" }
         if (!SurveyLinks.isAllowedInitialUrl(questionnaireUrl)) {

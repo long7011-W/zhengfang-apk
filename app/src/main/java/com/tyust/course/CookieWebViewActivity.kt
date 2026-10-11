@@ -60,6 +60,7 @@ class CookieWebViewActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyAdaptiveOrientation()
 
         val searchKeyword = intent.getStringExtra(EXTRA_SEARCH_KEYWORD) ?: "教务系统"
 

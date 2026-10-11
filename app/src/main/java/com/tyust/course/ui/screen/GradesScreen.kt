@@ -11,6 +11,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -22,6 +23,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -519,6 +521,8 @@ internal fun SemesterSelector(
             onSelect = { index -> semesters.getOrNull(index)?.let(onSemesterChange) },
             modifier = Modifier.fillMaxWidth(),
             label = "学期",
+            maxLabelLines = 2,
+            maxSelectedLabelLines = 1,
             placeholder = if (isLoading) "正在加载学期…" else "选择学期",
             actionLabel = if (onRefresh != null && !isLoading) "刷新学期列表" else null,
             onAction = onRefresh.takeUnless { isLoading }

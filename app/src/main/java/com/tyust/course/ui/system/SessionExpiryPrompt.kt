@@ -3,7 +3,6 @@ package com.tyust.course.ui.system
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -17,10 +16,10 @@ fun SessionExpiryPrompt(hasCachedContent: Boolean, onLater: () -> Unit, onLogin:
         onDismissRequest = onLater,
         title = { Text("需要重新登录", fontSize = 19.sp, lineHeight = 26.sp,
             fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) },
-        dismissButton = { TextButton(onClick = onLater, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+        dismissButton = { SystemDialogButton(onClick = onLater, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
             Text("稍后", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         } },
-        confirmButton = { TextButton(onClick = onLogin, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
+        confirmButton = { SystemDialogButton(primary = true, onClick = onLogin, modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp)) {
             Text("重新登录", fontSize = 15.sp, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
         } }
     ) {

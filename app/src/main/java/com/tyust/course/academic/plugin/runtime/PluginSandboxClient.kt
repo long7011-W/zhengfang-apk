@@ -8,13 +8,12 @@ import kotlinx.coroutines.*
 import org.json.JSONObject
 import java.util.concurrent.atomic.AtomicBoolean
 
-class PluginSandboxClient(context: Context, private val startupTimeoutMillis: Long = 10_000) {
+class PluginSandboxClient(context: Context, private val startupTimeoutMillis: Long = 10_000, private val idleTimeoutMillis: Long = 30_000) {
     private val application = context.applicationContext
 
     suspend fun execute(source: String, args: JSONObject, operation: PluginOperation, host: PluginHost): JSONObject = coroutineScope {
         operation.requireActive()
         val scope = this
-        val connected = CompletableDeferred<IPluginSandbox>()
         val result = CompletableDeferred<String>()
         val accepting = AtomicBoolean(true)
         val received = AtomicBoolean(false)
@@ -22,31 +21,39 @@ class PluginSandboxClient(context: Context, private val startupTimeoutMillis: Lo
         val startedAt = SystemClock.elapsedRealtime()
         var phaseStartedAt = startedAt
         var phase = "binding"
+        val dispatched = AtomicBoolean(false)
+        PluginTrace.stage(operation, "binding")
         fun diagnostic(outcome: String) {
             val now = SystemClock.elapsedRealtime()
-            Log.i("PluginSandbox", "phase=$phase outcome=$outcome phaseMs=${now - phaseStartedAt} totalMs=${now - startedAt}")
+            Log.i("PluginSandbox", "api=${Build.VERSION.SDK_INT} version=${operation.manifest.version} phase=$phase outcome=$outcome phaseMs=${now - phaseStartedAt} totalMs=${now - startedAt}")
         }
         fun disconnected(message: String) {
-            if (!accepting.get()) return
+            if (!accepting.get() || !dispatched.get()) return
             val error = operation.failure(PluginErrorCode.RUNTIME_EXITED, message)
-            connected.completeExceptionally(error)
             result.completeExceptionally(error)
         }
-        val connection = object : ServiceConnection {
-            override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-                if (accepting.get()) connected.complete(IPluginSandbox.Stub.asInterface(binder))
-            }
-            override fun onServiceDisconnected(name: ComponentName) = disconnected("插件进程已退出，请重试")
-            override fun onNullBinding(name: ComponentName) = disconnected("插件进程启动失败：服务未提供连接")
-            override fun onBindingDied(name: ComponentName) = disconnected("插件服务连接已失效，请重试")
-        }
-        var bound = false
+        var connectionLease: PluginSandboxConnections.Lease? = null
         var sandbox: IPluginSandbox? = null
         try {
             withTimeout(PluginLimits.WALL_MILLIS) {
-                bound = application.bindService(Intent(application, PluginSandboxService::class.java), connection, Context.BIND_AUTO_CREATE)
-                if (!bound) throw operation.failure(PluginErrorCode.RUNTIME_EXITED, "插件进程启动失败：无法绑定服务")
-                sandbox = withTimeout(startupTimeoutMillis) { connected.await() }
+                sandbox = withTimeout(startupTimeoutMillis) {
+                    var attempt = 0
+                    var connected: IPluginSandbox? = null
+                    while (connected == null) {
+                        operation.requireActive()
+                        val lease = PluginSandboxConnections.acquire(application, idleTimeoutMillis, ::disconnected)
+                        connectionLease = lease
+                        try { connected = lease.ready.await(); lease.requireReady() }
+                        catch (e: PluginException) {
+                            lease.close()
+                            if (e.code != PluginErrorCode.RUNTIME_EXITED || attempt++ >= 1) throw e
+                            connected = null
+                            PluginTrace.stage(operation, "binding_retry")
+                            yield()
+                        }
+                    }
+                    connected
+                }
                 diagnostic("connected")
                 operation.requireActive()
                 val bridge = object : IPluginHost.Stub() {
@@ -55,7 +62,14 @@ class PluginSandboxClient(context: Context, private val startupTimeoutMillis: Lo
                             payload.use {
                                 if (!accepting.get() || id != operation.id) throw PluginException(PluginErrorCode.CANCELLED, "操作标识已失效")
                                 operation.requireActive()
-                                host.call(method, PluginJson.parse(PluginWire.read(it)))
+                                val value = PluginJson.parse(PluginWire.read(it))
+                                if (method == "__runtimeStage") {
+                                    val stage = value.optString("stage")
+                                    if (stage !in setOf("engine_initializing", "engine_ready", "plugin_loading", "script"))
+                                        throw PluginException(PluginErrorCode.VALIDATION_FAILED, "无效运行阶段")
+                                    PluginTrace.stage(operation, stage)
+                                    PluginJson.success(JSONObject.NULL)
+                                } else host.call(method, value)
                             }
                         } catch (e: Exception) {
                             val error = if (e is PluginException) e else operation.failure(PluginErrorCode.VALIDATION_FAILED, "宿主调用失败")
@@ -83,7 +97,12 @@ class PluginSandboxClient(context: Context, private val startupTimeoutMillis: Lo
                     .put("args", args).put("context", operation.context)
                 phase = "executing"
                 phaseStartedAt = SystemClock.elapsedRealtime()
-                PluginWire.send(scope, request.toString()).use { sandbox!!.execute(it, bridge, callback) }
+                PluginWire.send(scope, request.toString()).use {
+                    connectionLease!!.requireReady()
+                    operation.requireActive()
+                    dispatched.set(true) // From here on, never replay execute(), even if Binder throws.
+                    sandbox!!.execute(it, bridge, callback)
+                }
                 val response = PluginJson.parse(result.await())
                 operation.requireActive()
                 if (!response.optBoolean("ok")) {
@@ -100,12 +119,14 @@ class PluginSandboxClient(context: Context, private val startupTimeoutMillis: Lo
                     } else detail
                     throw operation.failure(code, message)
                 }
+                PluginTrace.stage(operation, "completed")
                 diagnostic("completed")
                 response
             }
         } catch (e: TimeoutCancellationException) {
             // An outer deadline must remain caller cancellation.
             currentCoroutineContext().ensureActive()
+            if (phase == "binding") connectionLease?.invalidate("插件进程启动超时，请重试")
             diagnostic("timeout")
             throw if (phase == "binding") operation.failure(PluginErrorCode.RUNTIME_EXITED, "插件进程启动超时，请重试")
                 else operation.failure(PluginErrorCode.TIMEOUT, "插件执行超时，请重试")
@@ -123,7 +144,7 @@ class PluginSandboxClient(context: Context, private val startupTimeoutMillis: Lo
             throw operation.failure(PluginErrorCode.RUNTIME_EXITED, "插件进程响应中断，请重试")
         } catch (e: PluginException) {
             diagnostic(e.code.name)
-            throw e
+            throw operation.failure(e.code, e.message.orEmpty())
         } finally {
             accepting.set(false)
             incomingDescriptors.forEach { runCatching { it.close() } }
@@ -131,8 +152,7 @@ class PluginSandboxClient(context: Context, private val startupTimeoutMillis: Lo
             // The caller owns the operation through response validation/publication.
             // This client only retires its Binder connection and transport resources.
             runCatching { sandbox?.cancel(operation.id) }
-            if (bound) runCatching { application.unbindService(connection) }
-            connected.cancel()
+            connectionLease?.close()
             result.cancel()
         }
     }

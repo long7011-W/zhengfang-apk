@@ -114,6 +114,9 @@ class GlassLensAnchor internal constructor(
     internal var version by mutableIntStateOf(0)
         private set
 
+    internal var requireCurrentSource = false
+    internal var retainCompatibleBackground = false
+
     private var uploadedVersion = -1
     private var overlayVersion by mutableIntStateOf(0)
     private var uploadedOverlayVersion = -1
@@ -220,6 +223,14 @@ class GlassLensAnchor internal constructor(
         if (size.width <= 0 || size.height <= 0) return null
         val coords = coordinates?.takeIf { it.isAttached } ?: return null
         if (needsCapture(coords)) queueCapture()
+        if (requireCurrentSource) {
+            val currentIdentity = GlassLensFrameIdentity(
+                GlassLensCaptureGeometry.from(coords).fitPixelBudget(maxCapturePixels), overlayVersion)
+            val compatible = canRetainLensFrame(sourceFrame?.identity, currentIdentity, retainCompatibleBackground)
+            if (sourceFrame?.geometry != currentIdentity.geometry ||
+                (!compatible && (sourceFrame?.sourceRevision != version ||
+                    (retainCompatibleBackground && sourceFrame?.overlayRevision != overlayVersion)))) return null
+        }
         return size
     }
 
@@ -273,7 +284,7 @@ class GlassLensAnchor internal constructor(
                 GlassLensCaptureObserver.onTiming?.invoke(tag, "record", System.nanoTime() - recordStarted)
                 val generation = ++uploadSequence
                 val queuedAt = System.nanoTime()
-                val recording = GlassLensCaptureFrame(generation, geometry, combined, queuedAt)
+                val recording = GlassLensCaptureFrame(generation, geometry, combined, queuedAt, version, overlayVersion)
                 captureFrame = recording
                 uploadedVersion = version
                 uploadedOverlayVersion = overlayVersion
@@ -646,6 +657,12 @@ fun interface GlassLensOpticsProvider {
     fun compute(widthPx: Float, heightPx: Float): GlassLensOptics
 }
 
+/** Draw-local handshake: a non-null anchor is not proof that any background was painted. */
+class GlassLensDrawState {
+    var hasBackground: Boolean by mutableStateOf(false)
+        internal set
+}
+
 /**
  * 在本元素上画折射。API 33+ 与 30- 上返回原 Modifier，由调用方走各自既有路径。
  *
@@ -666,26 +683,32 @@ fun Modifier.glassLens(
     anchor: GlassLensAnchor?,
     optics: GlassLensOpticsProvider,
     scale: GlassLensScale? = null,
-    shape: Shape? = null
+    shape: Shape? = null,
+    drawState: GlassLensDrawState? = null,
+    drawPendingSource: Boolean = true
 ): Modifier {
     if (anchor == null || !isGlassLensApplicable()) return this
-    return this then GlassLensElement(anchor, optics, scale, shape)
+    return this then GlassLensElement(anchor, optics, scale, shape, drawState, drawPendingSource)
 }
 
 private data class GlassLensElement(
     val anchor: GlassLensAnchor,
     val optics: GlassLensOpticsProvider,
     val scale: GlassLensScale?,
-    val shape: Shape?
+    val shape: Shape?,
+    val drawState: GlassLensDrawState?,
+    val drawPendingSource: Boolean
 ) : ModifierNodeElement<GlassLensNode>() {
 
-    override fun create(): GlassLensNode = GlassLensNode(anchor, optics, scale, shape)
+    override fun create(): GlassLensNode = GlassLensNode(anchor, optics, scale, shape, drawState, drawPendingSource)
 
     override fun update(node: GlassLensNode) {
         node.anchor = anchor
         node.optics = optics
         node.scale = scale
         node.shape = shape
+        node.drawState = drawState
+        node.drawPendingSource = drawPendingSource
     }
 }
 
@@ -694,7 +717,9 @@ private class GlassLensNode(
     anchor: GlassLensAnchor,
     var optics: GlassLensOpticsProvider,
     var scale: GlassLensScale?,
-    var shape: Shape?
+    var shape: Shape?,
+    var drawState: GlassLensDrawState?,
+    var drawPendingSource: Boolean
 ) : Modifier.Node(), DrawModifierNode, GlobalPositionAwareModifierNode {
 
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -782,8 +807,12 @@ private class GlassLensNode(
         invalidateDraw()
     }
 
+    private var paintedBackground = false
+
     override fun ContentDrawScope.draw() {
+        paintedBackground = false
         drawLens()
+        drawState?.hasBackground = paintedBackground
         drawContent()
     }
 
@@ -859,14 +888,17 @@ private class GlassLensNode(
         updateClip(w, h, corners, t)
 
         if (useLiveSource) {
-            drawFallback(left, top, w, h, axes, t, optics.vibrancy, useLiveSource = true)
+            if (drawPendingSource) drawFallback(left, top, w, h, axes, t, optics.vibrancy, useLiveSource = true)
             return
         }
 
         // Keep a completed optical frame until its replacement is ready. Switching
         // to a plain source on every background revision produces visible flashes.
         // The renderer separately rejects mismatched source/coordinate generations.
-        val rendered = if (renderer.failed) null else renderer.latestFrame
+        val rendered = if (renderer.failed) null else renderer.latestFrame?.takeIf {
+            !anchor.requireCurrentSource || it.sourceGeneration == samplingFrame?.generation ||
+                canRetainLensFrame(it.params.sourceIdentity, samplingFrame?.identity, anchor.retainCompatibleBackground)
+        }
         val frame = rendered?.bitmap
         if (frame != null && !frame.isRecycled) {
             // 尺寸不一致时**拉伸**而不是丢弃：上一帧的尺寸在布局收敛或动画中经常
@@ -892,13 +924,14 @@ private class GlassLensNode(
                 // Only newly exposed pixels need the current, unrefracted source.
                 val uncovered = canvas.save()
                 canvas.clipOutPath(previousFrameClip)
-                drawFallback(left, top, w, h, axes, t, optics.vibrancy)
+                if (drawPendingSource) drawFallback(left, top, w, h, axes, t, optics.vibrancy)
                 canvas.restoreToCount(uncovered)
                 canvas.drawBitmap(frame, frameMatrix, paint)
             } else {
                 canvas.drawBitmap(frame, srcRect, dstRect, paint)
             }
             canvas.restoreToCount(saved)
+            paintedBackground = true
             if (rendered.sourceGeneration == samplingFrame?.generation &&
                 rendered.sourceGeneration != anchor.timedSourceGeneration) {
                 anchor.timedSourceGeneration = rendered.sourceGeneration
@@ -906,7 +939,7 @@ private class GlassLensNode(
                     System.nanoTime() - samplingFrame.queuedAtNanos)
             }
         } else {
-            drawFallback(left, top, w, h, axes, t, optics.vibrancy)
+            if (drawPendingSource) drawFallback(left, top, w, h, axes, t, optics.vibrancy)
         }
 
         // 元素级失败（如这台设备的 FBO 建不起来）：上面的 stale latest / 兜底已
@@ -941,7 +974,8 @@ private class GlassLensNode(
                 corners = corners,
                 sourceAxes = axes,
                 maxRenderPixels = optics.maxRenderPixels,
-                sourceGeneration = samplingFrame.generation
+                sourceGeneration = samplingFrame.generation,
+                sourceIdentity = samplingFrame.identity
             )
         )
     }
@@ -1064,6 +1098,7 @@ private class GlassLensNode(
             }
         }
         canvas.restoreToCount(save)
+        paintedBackground = true
     }
 
     private fun updateClip(w: Int, h: Int, corners: GlassLensCorners, t: GlassLensTransform) {

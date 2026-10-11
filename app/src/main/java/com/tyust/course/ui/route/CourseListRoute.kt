@@ -228,10 +228,10 @@ private fun loadFilterCategoriesFromRuntimeSource(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun CourseListRoute() {
+fun CourseListRoute(isActive: Boolean = true) {
     val academicSchool = UserManager.getInstance().currentSchool
     if (!UserManager.getInstance().isDemoMode && academicSchool != null && com.tyust.course.academic.AcademicGatewayFactory.supports(academicSchool)) {
-        AcademicCourseListRoute(academicSchool)
+        AcademicCourseListRoute(academicSchool, isActive)
         return
     }
     val context = LocalContext.current
@@ -361,6 +361,7 @@ fun CourseListRoute() {
     }
     
     // 🔧 交互锁：只有不在加载中 且 displayParams 包含关键参数时才允许展开详情
+    com.tyust.course.ui.system.ReportInitialPageReady(courses.isNotEmpty() || (hasInitializedRoute && !isLoading))
     com.tyust.course.ui.system.ReportPageContent(courses.isNotEmpty())
     val isDetailsReady = isDemoMode || (!isLoading && displayParams.containsKey("bklx_id"))
 

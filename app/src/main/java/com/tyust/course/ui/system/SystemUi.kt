@@ -9,6 +9,8 @@ import android.view.WindowManager
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -705,7 +707,9 @@ fun SystemPicker(
     actionLabel: String? = null,
     onAction: (() -> Unit)? = null,
     backdrop: Backdrop? = LocalControlBackdrop.current,
-    maxLabelLines: Int = 1
+    maxLabelLines: Int = 1,
+    maxSelectedLabelLines: Int = maxLabelLines,
+    popupWidth: Dp? = null
 ) {
     LiquidPicker(
         options = options.map(::LiquidPickerOption),
@@ -719,7 +723,9 @@ fun SystemPicker(
         actionLabel = actionLabel,
         onAction = onAction,
         backdrop = backdrop,
-        maxLabelLines = maxLabelLines
+        maxLabelLines = maxLabelLines,
+        maxSelectedLabelLines = maxSelectedLabelLines,
+        popupWidth = popupWidth
     )
 }
 
@@ -1060,6 +1066,7 @@ fun SystemDialog(
     title: @Composable (() -> Unit)? = null,
     presentation: DialogPresentation = DialogPresentation.Center,
     ownerKey: String? = null,
+    scrollContent: Boolean = false,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val dialogHost = LocalDialogHost.current
@@ -1072,6 +1079,7 @@ fun SystemDialog(
             dismissButton = dismissButton,
             icon = icon,
             title = title,
+            scrollContent = scrollContent,
             content = content
         )
     }
@@ -1090,7 +1098,13 @@ fun SystemDialog(
         }
     } else {
         Dialog(onDismissRequest = onDismissRequest) {
-            DisablePlatformDialogDim()
+            val dialogView = LocalView.current
+            DisposableEffect(dialogView) {
+                val window = (dialogView.parent as? DialogWindowProvider)?.window
+                window?.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                window?.setDimAmount(DialogScrimAlpha)
+                onDispose { }
+            }
             // 平台窗口路径没有 DialogHost，自己补同一套淡入缩放，避免弹窗硬切出现。
             var cardVisible by remember { mutableStateOf(false) }
             LaunchedEffect(Unit) {
@@ -1123,6 +1137,7 @@ private fun SystemDialogContent(
     dismissButton: @Composable (() -> Unit)?,
     icon: @Composable (() -> Unit)?,
     title: @Composable (() -> Unit)?,
+    scrollContent: Boolean,
     content: @Composable ColumnScope.() -> Unit
 ) {
     // iOS squircle：连续曲率，避免圆弧与直边交界处的折角感
@@ -1171,7 +1186,7 @@ private fun SystemDialogContent(
 
     // 320dp 是设计宽度；窄屏上按屏宽收，两侧至少留 20dp，不顶满边缘。
     val screen = rememberScreenMetrics()
-    val dialogWidth = minOf(320.dp, screen.widthDp - 40.dp)
+    val dialogWidth = minOf(if (screen.widthDp < 600.dp) 320.dp else 560.dp, screen.widthDp - 40.dp)
     // 短屏把卡片内边距与两处间距一起收，合计给正文多让出约 30dp。
     val dialogHorizontalPadding = screen.tall(24.dp, 20.dp)
     val dialogVerticalPadding = screen.tall(24.dp, 18.dp)
@@ -1264,14 +1279,15 @@ private fun SystemDialogContent(
         }
 
         CompositionLocalProvider(LocalControlBackdrop provides nestedControlBackdrop, LocalGlassLensAnchor provides nestedLensAnchor,
-            LocalThemedContent provides true, LocalGlassAppearanceOverride provides appearance) {
+            LocalThemedContent provides true, LocalGlassAppearanceOverride provides appearance,
+            androidx.compose.material3.LocalContentColor provides appearance.onSurface) {
         ProvideWallpaperAppearance(appearance) {
             Column(
                 modifier = Modifier.padding(
                     horizontal = dialogHorizontalPadding,
                     vertical = dialogVerticalPadding
                 ),
-                horizontalAlignment = Alignment.CenterHorizontally
+                horizontalAlignment = Alignment.Start
             ) {
             if (icon != null) {
                 icon()
@@ -1283,7 +1299,7 @@ private fun SystemDialogContent(
                 ) {
                     Box(
                         modifier = Modifier.fillMaxWidth(),
-                        contentAlignment = Alignment.Center
+                        contentAlignment = Alignment.CenterStart
                     ) {
                         title()
                     }
@@ -1296,7 +1312,7 @@ private fun SystemDialogContent(
                     .fillMaxWidth()
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier.fillMaxWidth().then(if (scrollContent) Modifier.verticalScroll(rememberScrollState()) else Modifier),
                     content = content
                 )
             }
@@ -1308,12 +1324,12 @@ private fun SystemDialogContent(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (dismissButton != null) {
-                        Box(modifier = Modifier.weight(1f)) {
+                        Box(modifier = Modifier.weight(1f), propagateMinConstraints = true) {
                             dismissButton()
                         }
                     }
                     if (confirmButton != null) {
-                        Box(modifier = Modifier.weight(1f)) {
+                        Box(modifier = Modifier.weight(1f), propagateMinConstraints = true) {
                             confirmButton()
                         }
                     }
@@ -1340,6 +1356,7 @@ fun SystemConfirmDialog(
 ) {
     SystemDialog(
         onDismissRequest = onDismiss,
+        scrollContent = true,
         title = {
             Text(
                 text = title,

@@ -58,7 +58,8 @@ data class ScheduleCourseRecord(
     val startPeriod: Int,
     val endPeriod: Int,
     val weeks: String,
-    val custom: Boolean = false
+    val custom: Boolean = false,
+    val details: List<ScheduleDetail> = emptyList()
 )
 
 data class ScheduleConflict(val otherId: String, val otherName: String, val weeks: Set<Int>, val startPeriod: Int, val endPeriod: Int)

@@ -90,8 +90,16 @@ class Gitee:
         return metadata, json.loads(content)
 
 
-def verify_delivery(client, tag, notes):
+def verify_delivery(client, tag, notes, envelope=None):
     _, version = client.read_json_file("version.json")
+    if envelope is not None:
+        from release_distribution import verify_manifest
+        manifest = verify_manifest(envelope, 'stable')
+        if manifest['versionName'] != tag[1:] or manifest['releaseNotes'].strip() != notes.strip():
+            raise RuntimeError('Signed manifest does not match release')
+        if not isinstance(version, dict) or version.get('versionCode') != manifest['versionCode'] or version.get('sha256') != manifest['sha256'] or version.get('downloadUrl') not in [m['url'] for m in manifest['mirrors']]:
+            raise RuntimeError('Legacy metadata does not match signed delivery')
+        return
     expected_url = f"{DOWNLOAD_ROOT}/{tag}/app-release.apk"
     if not isinstance(version, dict) or (
         version.get("versionName") != tag[1:]
@@ -107,11 +115,11 @@ def verify_delivery(client, tag, notes):
         raise RuntimeError("Gitee release APK is missing; announcement was not published")
 
 
-def publish_release(client, tag, announcement, notes):
+def publish_release(client, tag, announcement, notes, envelope=None):
     validate_announcement(announcement, tag)
     if not notes.strip():
         raise ValueError("Release notes must not be empty")
-    verify_delivery(client, tag, notes)
+    verify_delivery(client, tag, notes, envelope)
     metadata, existing = client.read_json_file("announcement.json", allow_missing=True)
     merged = merge_announcements(existing, announcement)
     if merged == existing:
