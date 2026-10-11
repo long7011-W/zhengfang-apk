@@ -70,8 +70,8 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private const val PeriodCountMin = 8
-private const val PeriodCountMax = 16
+private const val PeriodCountMin = ScheduleSettingsManager.PERIOD_COUNT_MIN
+private const val PeriodCountMax = ScheduleSettingsManager.PERIOD_COUNT_MAX
 
 /**
  * 课表设置页。
@@ -104,13 +104,17 @@ fun ScheduleSettingsScreen(
     reminderTerm: String = "",
     reminderSummary: com.tyust.course.schedule.SemesterReminderSummary? = null,
     canChangeReminders: Boolean = false,
-    onSemesterReminders: (Boolean) -> Unit = {}
+    onSemesterReminders: (Boolean) -> Unit = {},
+    defaultLead: Int = 15, onDefaultLead: ((Int) -> Unit)? = null, onAdjustments: (() -> Unit)? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     var periodCount by remember { mutableStateOf(manager.periodCount) }
+    LaunchedEffect(manager.revision) { periodCount = manager.periodCount }
     var storedPeriodTimes by remember { mutableStateOf(periodTimesOverride ?: manager.getPeriodTimes()) }
     var semesterStartDate by remember { mutableStateOf(semesterStartOverride ?: manager.semesterStartDate) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showLeadPicker by remember { mutableStateOf(false) }
+    if (showLeadPicker) ReminderLeadPicker(defaultLead, onDismiss = { showLeadPicker = false }, onSave = { it?.let { minutes -> onDefaultLead?.invoke(minutes) } })
     var showPeriodCountPicker by remember { mutableStateOf(false) }
     var editingPeriod by remember { mutableStateOf<PeriodTime?>(null) }
 
@@ -207,6 +211,11 @@ fun ScheduleSettingsScreen(
                         SemesterReminderSection(reminderAccountLabel, reminderTerm, summary, canChangeReminders,
                             onSemesterReminders, onConfigureTime = { showDatePicker = true })
                     }
+                    if (onDefaultLead != null || onAdjustments != null) InsetGroupedSection(header = "课程安排") {
+                        if (onDefaultLead != null) InsetGroupedRow(title = "默认提前提醒", subtitle = if (defaultLead == 0) "上课时通知" else "提前 " + defaultLead + " 分钟",
+                            onClick = { showLeadPicker = true })
+                        if (onAdjustments != null) InsetGroupedRow(title = "节假日与调课", subtitle = "停课、补课与单次课程调整", showDivider = false, onClick = onAdjustments)
+                    }
                     if (onDisplayPreferences != null) {
                         InsetGroupedSection(header = "课表显示") {
                             InsetGroupedRow(title = "周末", subtitle = "只影响周视图", trailing = {
@@ -227,6 +236,14 @@ fun ScheduleSettingsScreen(
                                 showDivider = index < com.tyust.course.schedule.ScheduleWidgetStyle.entries.lastIndex,
                                 onClick = { com.tyust.course.schedule.ScheduleWidgetUpdater.requestPin(context, style) })
                         }
+                    }
+                    val widgetManager = android.appwidget.AppWidgetManager.getInstance(context)
+                    val placedWidgets = com.tyust.course.schedule.ScheduleWidgetStyle.entries.flatMap { style ->
+                        widgetManager.getAppWidgetIds(android.content.ComponentName(context, style.provider)).map { it to style }
+                    }
+                    if (placedWidgets.isNotEmpty()) InsetGroupedSection(header = "已添加的组件") {
+                        placedWidgets.forEach { (id, style) -> InsetGroupedRow(title = style.title + " · " + id,
+                            subtitle = "背景图片、透明度与模糊", onClick = { com.tyust.course.schedule.ScheduleWidgetAppearanceActivity.open(context, id) }) }
                     }
                     if (onAddCustomCourse != null) {
                         InsetGroupedSection(header = "自定义课程") {

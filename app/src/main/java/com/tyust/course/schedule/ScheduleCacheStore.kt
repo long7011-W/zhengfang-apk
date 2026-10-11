@@ -65,10 +65,23 @@ internal class ScheduleCacheStore(
         val catalog = remote.catalog()
         val current = catalog.currentTerm
         val next = if (nextSemester) current.next() else current
-        val term = catalog.terms.firstOrNull { it.id == next.id } ?: next
+        val term = catalog.terms.firstOrNull { it.id == next.id }
+            ?: throw com.tyust.course.academic.AcademicException(com.tyust.course.academic.AcademicStatus.UNSUPPORTED, "学校尚未提供所选学期")
         // Existing installations may have data but no persisted current-term metadata yet.
         if (!forceRefresh) read(account, school, term)?.let { return CachedSchedule(current, term, it, true) }
-        return CachedSchedule(current, term, AcademicStudyBridge.scheduleJson(remote.schedule(term)), false, remote.calendar(term))
+        val json = AcademicStudyBridge.scheduleJson(remote.schedule(term))
+        return CachedSchedule(current, term, json, false, optionalCalendar(remote, term))
+    }
+
+    companion object {
+        suspend fun optionalCalendar(remote: AcademicStudyAdapter, term: AcademicTerm): JSONObject? = try {
+            remote.calendar(term)
+        } catch (e: java.io.IOException) { null }
+        catch (e: com.tyust.course.academic.AcademicException) {
+            if (e.status !in setOf(com.tyust.course.academic.AcademicStatus.NETWORK_RETRYABLE,
+                    com.tyust.course.academic.AcademicStatus.PAGE_CHANGED, com.tyust.course.academic.AcademicStatus.UNSUPPORTED)) throw e
+            null
+        }
     }
 
     fun save(account: String, school: String, schedule: CachedSchedule) {

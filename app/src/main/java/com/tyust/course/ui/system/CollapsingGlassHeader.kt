@@ -32,7 +32,7 @@ import com.tyust.course.ui.system.glass.glassRim
 import com.tyust.course.ui.system.glass.resolvePhysicalLens
 
 /**
- * 「上划收拢成一条悬浮玻璃」这套顶栏的两枚玻璃原件。
+ * 「上划收拢成一条悬浮玻璃」这套顶栏的两枚背景原件，关闭玻璃时绘制普通底色。
  *
  * 课表页先落地了这套做法（`ScheduleScreen.WeekHeaderCompact`），成绩页要复用，
  * 于是把玻璃部分搬到这里；页面各自负责自己的几何与前景排布——那部分本来就该不一样，
@@ -121,9 +121,19 @@ internal fun wallpaperHeaderScrim(): Modifier {
 internal fun StatusBarFrost(
     height: Dp,
     collapse: Float,
-    backdrop: Backdrop
+    backdrop: Backdrop?
 ) {
     val appearance = LocalWallpaperAppearanceColors.current
+    if (backdrop == null || !isBackdropSupported()) {
+        val tint = appearance.solidSurface.copy(alpha = appearance.solidSurface.alpha * collapse.coerceIn(0f, 1f))
+        com.tyust.course.ui.theme.ReportStatusBarSurface(tint.compositeOver(wallpaperHeaderTint()))
+        // Fade the paint itself, without a capture layer, DstIn mask or hardware shadow.
+        val solidStop = if (height > 0.dp) ((height - StatusBarFrostFade) / height).coerceIn(0f, 1f) else 0f
+        Box(Modifier.fillMaxWidth().height(height).background(Brush.verticalGradient(
+            0f to tint, solidStop to tint, 1f to tint.copy(alpha = 0f)
+        )))
+        return
+    }
     val isLightTheme = appearance.usesDarkForeground
     val customWallpaper = com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset
     val tint = if (customWallpaper) appearance.surface else if (isLightTheme) {
@@ -175,11 +185,21 @@ internal fun StatusBarFrost(
 @Composable
 internal fun HeaderGlassSlab(
     strength: Float,
-    backdrop: Backdrop,
+    backdrop: Backdrop?,
     cornerRadius: Dp,
     modifier: Modifier = Modifier
 ) {
     val appearance = LocalWallpaperAppearanceColors.current
+    val slabShape = RoundedCornerShape(cornerRadius)
+    if (backdrop == null || !isBackdropSupported()) {
+        // Fill the complete rounded surface in one ordinary draw. A separate
+        // elevation shadow beneath a fading fill can leave a hollow frame on
+        // some renderers. Neither that shadow nor glass capture belongs here.
+        Box(modifier.background(appearance.solidSurface.copy(
+            alpha = appearance.solidSurface.alpha * strength.coerceIn(0f, 1f)
+        ), slabShape))
+        return
+    }
     val isLightTheme = appearance.usesDarkForeground
     val customWallpaper = com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset
     val accessibility = rememberGlassAccessibilityMode()
@@ -187,7 +207,6 @@ internal fun HeaderGlassSlab(
         GlassMaterials.resolve(GlassMaterialRole.Navigation, accessibility)
             .copy(refractionHeightDp = 16f, refractionAmountDp = 22f)
     }
-    val slabShape = RoundedCornerShape(cornerRadius)
     // 白雾压薄一档：玻璃感要来自边缘光与折射，白雾一厚就是一张白卡片
     val surface = if (customWallpaper) appearance.surface else if (isLightTheme) {
         Color.White.copy(alpha = 0.22f * strength)

@@ -32,6 +32,30 @@ class PluginUpdateStoreTest {
             zip.putNextEntry(ZipEntry("manifest.json")); zip.write(manifest.toString().toByteArray()); zip.closeEntry()
         } }.toByteArray()
     }
+    @Test fun uninstallAcademicAdapterRestoresExplicitBuiltinAndKeepsSchoolData() = runBlocking {
+        val user = com.tyust.course.manager.UserManager.getInstance(); user.init(app)
+        val pkg = store.install(archive("1.0.0"), true); AcademicProviderRegistry.reload()
+        val school = AcademicProviderRegistry.school(pkg); user.addCustomSchool(school); user.currentSchool = school
+        AcademicProviderRegistry.choose(school, pkg.manifest.id)
+        val cache = app.getSharedPreferences("schedule_cache", 0); cache.edit().putString("synthetic", "cached-course").commit()
+        assertTrue(AcademicProviderRegistry.removalDescription(pkg).contains("恢复对应内置适配"))
+        AcademicProviderRegistry.removePlugin(pkg)
+        assertNull(store.active(pkg.manifest.id)); assertNotNull(user.getSchoolById(school.id))
+        assertEquals("builtin.zf", AcademicProviderRegistry.manualChoice(school))
+        assertEquals("cached-course", cache.getString("synthetic", null))
+        assertTrue(app.getSharedPreferences("native-plugin-permissions", 0).getLong(pkg.manifest.id + ":academic-session:revocation", 0) > 0)
+    }
+    @Test fun removalWithoutMatchingBuiltinDoesNotSelectAnUnrelatedProtocol() {
+        val user = com.tyust.course.manager.UserManager.getInstance(); user.init(app)
+        val manifest = JSONObject("""{"id":"test.no-fallback","name":"Synthetic","version":"1.0.0","kind":"independent","apiVersion":3,"school":{"id":"no-fallback","name":"Synthetic","domain":"school.test","protocol":"https","basePath":"/"},"network":[],"capabilities":[]}""")
+        val pkg = PluginPackage(PluginManifest(manifest), "", "synthetic", false)
+        val school = AcademicProviderRegistry.school(pkg); user.addCustomSchool(school); AcademicProviderRegistry.choose(school, pkg.manifest.id)
+        AcademicProviderRegistry.removePlugin(pkg)
+        assertEquals("unconfigured", AcademicProviderRegistry.manualChoice(school))
+        assertThrows(com.tyust.course.academic.AcademicException::class.java) { AcademicProviderRegistry.resolve(school) }
+        assertNotNull(user.getSchoolById(school.id))
+    }
+
     @Test fun stagingDoesNotChangeActiveAndAnActiveLeaseBlocksActivationAndRollback() = runBlocking {
         val first = store.install(archive("1.0.0"), true)
         val next = store.install(archive("2.0.0"), true, true)

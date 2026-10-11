@@ -195,9 +195,12 @@ data class ScheduleCourseUi(
     ),
     val hasConflict: Boolean = false,
     val isCurrent: Boolean = false,
-    val isNext: Boolean = false
+    val isNext: Boolean = false,
+    val details: List<com.tyust.course.schedule.ScheduleDetail> = emptyList(),
+    val occurrenceDate: String? = null,
+    val originalOccurrenceDate: String? = null
 ) {
-    fun record() = com.tyust.course.schedule.ScheduleCourseRecord(id, name, teacher, location, day, startPeriod, endPeriod, weeks, isCustom)
+    fun record() = com.tyust.course.schedule.ScheduleCourseRecord(id, name, teacher, location, day, startPeriod, endPeriod, weeks, isCustom, details)
 }
 
 data class PeriodTimeUi(val period: Int, val startTime: String, val endTime: String)
@@ -526,7 +529,7 @@ fun TimetableLayout(
     onCourseLongClick: (ScheduleCourseUi) -> Unit = {}
 ) {
     val entries = remember(courses, dayCount) { timetableEntries(courses.filter { it.day in 1..dayCount }) }
-    var selectedGroup by remember(courses) { mutableStateOf<List<ScheduleCourseUi>?>(null) }
+    var selectedGroup by remember { mutableStateOf<List<ScheduleCourseUi>?>(null) }
     selectedGroup?.let { group ->
         com.tyust.course.ui.system.SystemDialog(onDismissRequest = { selectedGroup = null }, title = { Text("重叠课程") }) {
             Column(Modifier.fillMaxWidth().heightIn(max = 440.dp).verticalScroll(rememberScrollState()),
@@ -543,7 +546,7 @@ fun TimetableLayout(
         modifier = modifier.fillMaxSize(),
         content = {
             entries.forEach { entry ->
-                androidx.compose.runtime.key(entry.display.id) { CourseCard(course = entry.display, onClick = {
+                androidx.compose.runtime.key(entry.display.id + entry.display.occurrenceDate.orEmpty() + entry.display.startPeriod) { CourseCard(course = entry.display, onClick = {
                     if (entry.courses.size == 1) onCourseClick(entry.courses.first()) else selectedGroup = entry.courses
                 }, onLongClick = {
                     if (entry.courses.size == 1) onCourseLongClick(entry.courses.first()) else selectedGroup = entry.courses

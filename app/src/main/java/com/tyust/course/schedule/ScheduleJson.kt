@@ -41,7 +41,12 @@ object ScheduleJson {
             val end = periods.lastOrNull()?.trim()?.toIntOrNull() ?: start
             val sourceId = text("schedule_source_id", "kcb_id", "kb_id", "jxb_id", "jx0404id", "kch_id")
             val id = ScheduleIdentity.network(sourceId, name, teacher, day, start, end, weeks, location)
-            NetworkScheduleCourse(ScheduleCourseRecord(id, name, teacher, location, day, start, end, weeks), sourceId)
-        }.distinctBy { it.course.id }
+            NetworkScheduleCourse(ScheduleCourseRecord(id, name, teacher, location, day, start, end, weeks, details = ScheduleDetails.parse(row.optJSONArray("details"), ScheduleWeeks.parse(weeks).weeks)), sourceId)
+        }.groupBy { it.course.id }.values.map { rows ->
+            val first = rows.first()
+            val merged = rows.drop(1).fold(first.course.details) { fields, row -> ScheduleDetails.merge(fields, row.course.details) }
+            val details = ScheduleDetails.parse(ScheduleDetails.json(merged), ScheduleWeeks.parse(first.course.weeks).weeks)
+            first.copy(course = first.course.copy(details = details))
+        }
     }.getOrNull()
 }

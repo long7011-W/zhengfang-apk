@@ -16,7 +16,7 @@ class PluginAcademicAdapter(
     private val scopeStillActive: () -> Boolean = { true },
     private val inheritedPackage: PluginPackage? = null
 ) : AcademicProtocolAdapter, AcademicStudyAdapter, AcademicCaptchaLogin, SessionBackedAdapter {
-    private val schema = PluginSchema(PluginJson.parse(app.assets.open("academic-plugin/contract.schema.json").bufferedReader().use { it.readText() }))
+    private val schema = PluginContractCache.schema(app)
     private var continuation: String? = null
     private var ownWebLogin: JSONObject? = null
     @Volatile private var loginInProgress = false
@@ -49,35 +49,45 @@ class PluginAcademicAdapter(
         if (needsShared != (shared != null)) throw AcademicException(AcademicStatus.UNSUPPORTED, "共享校园服务必须通过宿主授权入口调用")
         if (method !in pinned.manifest.capabilities)
             return (base as? PluginAcademicAdapter)?.invoke(method, args, confirmed) ?: unsupported(method)
+        val queuedAt = android.os.SystemClock.elapsedRealtime()
         return session.withProtocolLock {
         val reusableAction = if (!confirmed && method == "service.action" && shared?.rememberedAction(args.optString("actionId")) == true) args.getString("actionId") else null
         val effectiveConfirmation = confirmed || reusableAction != null
         ServicePluginContract.requireRequest(pinned.manifest, method, args, effectiveConfirmation)
         val op = PluginOperation(session, pinned.manifest, method, development = !pinned.official && !pinned.bundled, confirmed = effectiveConfirmation,
             actionId = if (method == "service.action") args.getString("actionId") else null,
-            scopeStillActive = { shared?.requireGrant(grant); scopeStillActive() })
+            packageDigest = pinned.digest, scopeStillActive = { shared?.requireGrant(grant); scopeStillActive() })
+        PluginTrace.stage(op, "protocol_lock", android.os.SystemClock.elapsedRealtime() - queuedAt)
         val tokenCapture = if (method.startsWith("auth.") && pinned.manifest.isAcademic && pinned.manifest.json.has("academicSessionToken"))
             PluginAcademicTokenCapture(op, pinned) else null
         val host = PluginHost(op, storageRoot, shared?.cookies(grant) ?: session.cookies,
             captureToken = tokenCapture?.let { it::capture },
-            sharedApproval = shared?.let { access -> { request ->
-                if (reusableAction != null && request.has("body")) throw PluginException(PluginErrorCode.PERMISSION_DENIED, "可复用操作仅接受审核过的结构化参数")
+            sharedSite = { shared?.siteAuthorized() == true },
+                    sharedApproval = shared?.let { access -> { request ->
+                if (!access.siteAuthorized() && reusableAction != null && request.has("body")) throw PluginException(PluginErrorCode.PERMISSION_DENIED, "可复用操作仅接受审核过的结构化参数")
                 if (confirmed) false
+                else if (access.siteAuthorized()) request.getString("purpose") == "mutation"
                 else if (reusableAction != null) access.operation(request)?.optString("risk") == "read-state"
                 else access.requireReviewedReadOrConfirmation(request)
             } },
             sharedToken = shared?.let { access -> { url -> access.tokenHeader(grant, url) } },
             sharedRequest = shared?.let { access -> { url, verb, purpose, form -> access.requireRequest(grant, url, verb, purpose, form)
-                if (reusableAction != null) access.requireRememberedAction(reusableAction, url, verb, purpose, form)
+                if (reusableAction != null && !access.siteAuthorized()) access.requireRememberedAction(reusableAction, url, verb, purpose, form)
             } },
             tokenSession = shared?.session ?: session, dataGuard = if (pinned.manifest.isService || pinned.manifest.isNative && !pinned.manifest.isAcademic) PluginDataGuard(app, pinned) else null)
         val sharedCredential = shared?.session?.pluginToken
         val lease = PluginVersionLeases.acquire(pinned.manifest.id)
         try {
             shared?.track(grant, op)
+            PluginTrace.stage(op, "sandbox")
             val result = PluginSandboxClient(app).execute(pinned.source, args, op, host)
             op.requireActive()
+            PluginTrace.stage(op, "response_validation")
             schema.response(method, result).also { data ->
+                if (method == "selection.courses" && pinned.manifest.json.optInt("minAppVersionCode") < 101 &&
+                    PluginJson.objects(data.getJSONArray("items")).any { it.has("sectionCount") })
+                    throw PluginException(PluginErrorCode.VALIDATION_FAILED, "sectionCount 需要声明 minAppVersionCode 101")
+                if (method == "study.schedule") PluginJson.objects(data.getJSONArray("entries")).forEach { com.tyust.course.schedule.ScheduleDetails.fromEntry(it) }
                 tokenCapture?.publish(data)
                 if (method == "service.page") {
                     if (data.getString("pageId") != args.getString("pageId")) throw PluginException(PluginErrorCode.VALIDATION_FAILED, "服务返回了其他页面")
@@ -166,7 +176,7 @@ class PluginAcademicAdapter(
         PluginJson.objects(data.getJSONArray("entries")).map { item ->
             if (item.getInt("endPeriod") < item.getInt("startPeriod")) throw AcademicException(AcademicStatus.PAGE_CHANGED, "课表节次顺序无效")
             AcademicScheduleEntry(item.getString("name"), item.optString("teacher"), item.optString("location"), item.getInt("day"),
-                item.getInt("startPeriod"), item.getInt("endPeriod"), (0 until item.getJSONArray("weeks").length()).joinToString(",") { item.getJSONArray("weeks").getInt(it).toString() } + "周", item.getString("id"))
+                item.getInt("startPeriod"), item.getInt("endPeriod"), (0 until item.getJSONArray("weeks").length()).joinToString(",") { item.getJSONArray("weeks").getInt(it).toString() } + "周", item.getString("id"), com.tyust.course.schedule.ScheduleDetails.fromEntry(item))
         }
     } else study?.schedule(term) ?: unsupported("study.schedule")
     override suspend fun grades(term: AcademicTerm?): AcademicGradeReport = if (has("study.grades")) {
@@ -192,20 +202,74 @@ class PluginAcademicAdapter(
     override suspend fun exams(term: AcademicTerm): List<AcademicExam> = if (has("study.exams"))
         pages("study.exams", JSONObject().put("termId", term.id)).map { AcademicExam(it.getString("name"), it.getString("time"), it.optString("location"), it.optString("seat"), it.optString("examName"), it.optString("teacher")) }
         else study?.exams(term) ?: unsupported("study.exams")
+    override val hasCourseFilters: Boolean get() = has("selection.filters") || !has("selection.catalog") && base?.hasCourseFilters == true
+    override suspend fun courseFilters(context: CourseContext, roundId: String): CourseFilters? {
+        check(context)
+        if (!has("selection.filters")) return if (!has("selection.catalog")) base?.courseFilters(context, roundId) else null
+        if (context.scopes.none { it.id == roundId }) throw AcademicException(AcademicStatus.ROUND_CLOSED, "选课未开放，暂无法获取筛选条件")
+        val result = invoke("selection.filters", JSONObject().put("roundId", roundId))
+        if (result.getString("roundId") != roundId) throw AcademicException(AcademicStatus.PAGE_CHANGED, "筛选轮次不匹配")
+        val groups = PluginJson.objects(result.getJSONArray("groups")).map { group ->
+            CourseFilterGroup(group.getString("id"), group.getString("label"), group.getString("kind"),
+                PluginJson.objects(group.getJSONArray("options")).map { CourseFilterOption(it.getString("value"), it.getString("label")) })
+        }
+        if (groups.distinctBy { it.id }.size != groups.size || groups.any { it.options.distinctBy { o -> o.value }.size != it.options.size })
+            throw AcademicException(AcademicStatus.PAGE_CHANGED, "学校筛选包含重复标识")
+        return CourseFilters(roundId, result.getString("revision"), groups)
+    }
     override suspend fun loadCourseContext(): CourseContext = if (has("selection.catalog")) CourseContext(session.epoch,
         pages("selection.catalog").filter { it.getBoolean("open") }.map { CourseScope(it.getString("id"), it.getString("name"), it.optString("termId")) }) else native().loadCourseContext()
-    override suspend fun listCourses(context: CourseContext, query: CourseQuery): List<CourseOffer> = if (has("selection.courses")) {
+    override suspend fun coursePage(context: CourseContext, query: CourseQuery, cursor: String?): AcademicPage<CourseOffer> {
+        if (!has("selection.courses")) return native().coursePage(context, query, cursor)
         check(context)
-        val scopes = context.scopes.filter { query.scopeId.isBlank() || it.id == query.scopeId }
-        scopes.flatMap { scope -> pages("selection.courses", JSONObject().put("roundId", scope.id).put("keyword", query.keyword).put("teacher", query.teacher)).map {
+        if (context.scopes.none { it.id == query.scopeId }) throw AcademicException(AcademicStatus.ROUND_CLOSED, "选课轮次已结束")
+        val page = invoke("selection.courses", JSONObject().put("roundId", query.scopeId)
+            .put("keyword", query.keyword).put("teacher", query.teacher).put("pageSize", query.pageSize.coerceIn(1, 200)).apply {
+                cursor?.let { put("cursor", it) }; query.filters?.let { put("filters", it.toJson()) }
+            })
+        val rows = PluginJson.objects(page.getJSONArray("items")).map {
+            if (it.getString("roundId") != query.scopeId) throw AcademicException(AcademicStatus.PAGE_CHANGED, "课程轮次不匹配")
             CourseOffer(it.getString("id"), it.getString("name"), it.optString("teacher"), it.optString("time"), it.optString("location"), it.optString("credits"),
-                number(it,"capacity"), number(it,"selected"), scope.id, mapOf("sectionId" to it.optString("sectionId"), "jxbmc" to it.optString("sectionName")))
-        } }.drop(query.start).take(query.pageSize)
-    } else native().listCourses(context, query)
-    override suspend fun listSections(course: CourseOffer): List<CourseSection> = if (has("selection.sections")) pages("selection.sections", JSONObject().put("roundId", course.scopeId).put("courseId", course.stableId)).map {
-        if (it.getString("courseId") != course.stableId) throw AcademicException(AcademicStatus.PAGE_CHANGED, "教学班课程身份不匹配")
-        CourseSection(it.getString("id"), course.stableId, it.optString("name"), it.optString("teacher"), it.optString("time"), it.optString("location"), number(it,"capacity"), number(it,"selected"))
-    } else native().listSections(course)
+                number(it,"capacity"), number(it,"selected"), query.scopeId,
+                mapOf("sectionId" to it.optString("sectionId"), "jxbmc" to it.optString("sectionName")), sectionCount = number(it,"sectionCount"))
+        }
+        return AcademicPage(rows, page.optString("nextCursor").takeIf(String::isNotBlank))
+    }
+    override suspend fun listCourses(context: CourseContext, query: CourseQuery): List<CourseOffer> {
+        if (!has("selection.courses")) return native().listCourses(context, query)
+        val rows = mutableListOf<CourseOffer>()
+        val history = CoursePageHistory()
+        var position: CoursePosition? = CoursePosition()
+        while (position != null && rows.size < query.start + query.pageSize) {
+            val page = scopedCoursePage(context, query, position)
+            rows += history.accept(position, page)
+            position = page.next
+        }
+        return rows.drop(query.start).take(query.pageSize)
+    }
+    override suspend fun sectionPage(course: CourseOffer, cursor: String?): AcademicPage<CourseSection> {
+        if (!has("selection.sections")) return native().sectionPage(course, cursor)
+        val page = invoke("selection.sections", JSONObject().put("roundId", course.scopeId).put("courseId", course.stableId)
+            .put("pageSize", 200).apply { cursor?.let { put("cursor", it) } })
+        val rows = PluginJson.objects(page.getJSONArray("items")).map {
+            if (it.getString("courseId") != course.stableId) throw AcademicException(AcademicStatus.PAGE_CHANGED, "教学班课程身份不匹配")
+            CourseSection(it.getString("id"), course.stableId, it.optString("name"), it.optString("teacher"), it.optString("time"), it.optString("location"), number(it,"capacity"), number(it,"selected"))
+        }
+        return AcademicPage(rows, page.optString("nextCursor").takeIf(String::isNotBlank))
+    }
+    override suspend fun listSections(course: CourseOffer): List<CourseSection> {
+        val rows = linkedMapOf<String, CourseSection>()
+        val cursors = mutableSetOf<String>()
+        var cursor: String? = null
+        do {
+            val page = sectionPage(course, cursor)
+            page.items.forEach { rows[it.stableId] = it }
+            cursor = page.nextCursor
+            if (rows.size > 10000 || cursor != null && (!cursors.add(cursor) || cursors.size >= 100))
+                throw AcademicException(AcademicStatus.PAGE_CHANGED, "教学班分页异常")
+        } while (cursor != null)
+        return rows.values.toList()
+    }
     override suspend fun selected(context: CourseContext): List<SelectedCourse> = if (has("selection.enrolled")) {
         check(context); pages("selection.enrolled").map(::enrollment)
     } else native().selected(context)

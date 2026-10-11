@@ -117,7 +117,7 @@ class AcademicSessionStore {
 
     fun session(schoolId: String, accountKey: String, baseUrl: String): AcademicSession =
         sessions.compute(AcademicSessionKey(schoolId, accountKey)) { key, previous ->
-            if (previous?.baseUrl == baseUrl) previous else {
+            if (previous != null && previous.baseUrl == baseUrl && !previous.retired) previous else {
                 previous?.retire()
                 AcademicSession(key, baseUrl)
             }

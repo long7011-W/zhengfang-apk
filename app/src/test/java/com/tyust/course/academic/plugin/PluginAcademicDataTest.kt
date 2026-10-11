@@ -49,6 +49,20 @@ class PluginAcademicDataTest {
         assertEquals(2, rows.size); assertEquals(1, rows.count { it.custom })
         val repeated = data.preview(input()); assertEquals(0, repeated.getInt("added")); assertEquals(1, repeated.getInt("duplicates"))
     }
+    @Test fun expandedCourseDetailsSurvivePreviewCommitSnapshotAndRepeatedImport() {
+        val extended = caller.copy(manifest = PluginManifest(JSONObject(caller.manifest.json.toString()).put("minAppVersionCode",96)))
+        val data = PluginAcademicData(app,extended,{true},now={clock})
+        val payload = input()
+        val fields = JSONArray().put(JSONObject().put("id","notes").put("label","备注").put("value","合成授课内容").put("weeks",JSONArray(listOf(1))))
+        payload.getJSONObject("schedule").getJSONArray("entries").getJSONObject(0).put("details", fields)
+        val first = data.preview(payload); data.confirm(first.getString("previewId"))
+        val saved = ScheduleRepository(app).snapshot(user.currentAccountStorageKey,school.id,term.id).courses.single()
+        assertEquals("合成授课内容",saved.details.single().value)
+        val second = data.preview(payload)
+        assertEquals(0,second.getInt("added")); assertEquals(1,second.getInt("duplicates"))
+        assertEquals(fields.toString(),second.getJSONArray("entries").getJSONObject(0).getJSONArray("details").toString())
+        assertThrows(PluginException::class.java) { PluginAcademicData(app,caller,{true},now={clock}).preview(payload) }
+    }
     @Test fun expiredOrAccountReplacedPreviewsCannotCommit() {
         val data = data(); val id = data.preview(input()).getString("previewId")
         clock += 1_800_001

@@ -4,6 +4,11 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import com.tyust.course.update.awaitResponse
+import com.tyust.course.update.UpdateManifestVerifier
+import android.util.AtomicFile
+import java.io.File
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -23,9 +28,17 @@ object AnnouncementManager {
     // 公告 JSON 地址（Gitee Raw）
     private const val ANNOUNCEMENT_URL = "https://gitee.com/znj12345/zhengfang/raw/main/announcement.json"
     
-    private val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(10, TimeUnit.SECONDS)
+    private var appContext: Context? = null
+    fun initialize(context: Context) { appContext = context.applicationContext }
+    private val announcementSources = listOf(
+        "https://dl.hidisiwa.xyz/announcement.json",
+        "https://raw.githubusercontent.com/znjhahaha/zhengfang-apk/updates/announcement.json",
+        "https://gh-proxy.com/https://raw.githubusercontent.com/znjhahaha/zhengfang-apk/updates/announcement.json",
+        ANNOUNCEMENT_URL
+    )
+    private val client = OkHttpClient.Builder().followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
+        .connectTimeout(3, TimeUnit.SECONDS)
+        .readTimeout(4, TimeUnit.SECONDS).callTimeout(5, TimeUnit.SECONDS)
         .build()
     
     private fun getPrefs(context: Context): SharedPreferences {
@@ -59,27 +72,62 @@ object AnnouncementManager {
      */
     suspend fun fetchAllAnnouncements(): List<Announcement> {
         return withContext(Dispatchers.IO) {
-            try {
-                val request = Request.Builder()
-                    .url(ANNOUNCEMENT_URL)
-                    .header("Cache-Control", "no-cache")
-                    .build()
-                
-                val response = client.newCall(request).execute()
-                if (!response.isSuccessful) {
-                    Log.e(TAG, "获取公告失败: HTTP ${response.code}")
-                    return@withContext emptyList()
-                }
-                
-                val json = response.body?.string() ?: return@withContext emptyList()
-                parseAnnouncements(json)
-            } catch (e: Exception) {
-                Log.e(TAG, "获取公告失败: ${e.message}")
-                emptyList()
+            val cache = appContext?.let { AtomicFile(File(it.filesDir, "announcement-cache.json")) }
+            val deadline = android.os.SystemClock.elapsedRealtime() + 12000
+            for (source in announcementSources) {
+                try {
+                    var url = source
+                    for (redirect in 0..5) {
+                        val remaining = deadline - android.os.SystemClock.elapsedRealtime()
+                        if (remaining <= 0) break
+                        require(UpdateManifestVerifier.validUrl(url))
+                        val call = client.newCall(Request.Builder().url(url).header("Cache-Control", "no-cache").build())
+                        call.timeout().timeout(minOf(5000, remaining), TimeUnit.MILLISECONDS)
+                        call.awaitResponse().use { response ->
+                            if (response.code in setOf(301, 302, 303, 307, 308)) {
+                                url = response.header("Location")?.let { response.request.url.resolve(it)?.toString() } ?: error("redirect")
+                                return@use
+                            }
+                            require(response.isSuccessful)
+                            val body = response.body ?: error("empty")
+                            val output = java.io.ByteArrayOutputStream()
+                            body.byteStream().use { input ->
+                                val buffer = ByteArray(8192)
+                                while (true) { val n = input.read(buffer); if (n < 0) break
+                                    require(output.size() + n <= 256 * 1024); output.write(buffer, 0, n)
+                                }
+                            }
+                            val json = output.toString("UTF-8")
+                            val parsed = validateDocument(json)
+                            if (cache != null) {
+                                val stream = cache.startWrite()
+                                try { stream.write(json.toByteArray()); cache.finishWrite(stream) }
+                                catch (e: Exception) { cache.failWrite(stream) }
+                            }
+                            return@withContext parsed
+                        }
+                    }
+                } catch (e: CancellationException) { throw e }
+                catch (_: Exception) { /* Keep the last valid announcement history. */ }
             }
+            runCatching { cache?.readFully()?.toString(Charsets.UTF_8)?.let(::validateDocument) }.getOrNull().orEmpty()
         }
     }
-    
+
+    internal fun validateDocument(json: String): List<Announcement> {
+        require(json.toByteArray().size <= 256 * 1024)
+        val trimmed = json.trim()
+        val entries = if (trimmed.startsWith("[")) JSONArray(trimmed) else {
+            val obj = JSONObject(trimmed)
+            if (obj.has("announcements")) obj.getJSONArray("announcements") else JSONArray().put(obj)
+        }
+        for (index in 0 until entries.length()) {
+            val item = entries.getJSONObject(index)
+            require(listOf("id", "title", "content").all { item.optString(it).isNotBlank() })
+        }
+        return parseAnnouncements(json)
+    }
+
     /**
      * 获取第一条未读公告（兼容旧接口）
      */

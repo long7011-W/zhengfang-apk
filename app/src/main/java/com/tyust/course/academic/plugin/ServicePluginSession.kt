@@ -14,6 +14,7 @@ class ServicePluginSession(
     private val school = pkg.manifest.school
     private val baseUrl = "${school.getString("protocol")}://${school.getString("domain")}${school.getString("basePath")}".trimEnd('/') + "/"
     private var adapter = createAdapter("")
+    private val sandboxConnection = com.tyust.course.academic.plugin.runtime.PluginSandboxConnections.acquire(app)
     private var closed = false
     private var sharedAccess: PluginAcademicSession? = null
     private var sharedGrant = ""
@@ -51,10 +52,34 @@ class ServicePluginSession(
     /** A renewed school login needs a fresh handle, not another consent dialog. */
     fun restoreAcademicAuthorization(): Boolean {
         ensureScope(); check(sharesAcademicSession)
+        if (authenticated) return true
         val access = academicAccess()
+        if (!access.siteAuthorized()) return false
         val grant = access.existingGrant() ?: return false
         adopt(access, grant)
         return true
+    }
+    internal fun hasAcademicConsent(): Boolean {
+        ensureScope(); check(sharesAcademicSession)
+        return try { academicAccess().hasSiteConsent() }
+        catch (error: PluginException) {
+            if (error.code != PluginErrorCode.SESSION_EXPIRED) throw error
+            PluginAcademicSession.rememberedSiteConsent(app, pkg)
+        }
+    }
+    suspend fun ensureAcademicAuthorization(prompt: suspend (String) -> String?) {
+        ensureScope()
+        val access = academicAccess()
+        val grant = PluginConsentCoordinator.request(access.coordinationKey()) {
+            access.requireCredentials()
+            if (access.siteAuthorized()) access.authorize()
+            else {
+                val choice = PluginExecutionBudget.userInput { prompt(access.description()) }
+                if (choice !in setOf("once", "remember")) throw PluginException(PluginErrorCode.CANCELLED, "已拒绝授权")
+                access.authorizeSite(choice == "remember")
+            }
+        }
+        adopt(access, grant.getString("grant"))
     }
     private fun academicAccess() = PluginAcademicSession(app, pkg, { !closed && scopeStillActive() }).also {
         it.confirmUnknownRequest = requestConfirmation
@@ -65,7 +90,7 @@ class ServicePluginSession(
         ensureScope(); check(sharesAcademicSession)
         val access = checkNotNull(sharedAccess) { "请先确认共享教务登录的授权范围" }
         access.requireCredentials()
-        adopt(access, access.authorize(remember, includeReadState).getString("grant"))
+        adopt(access, access.authorizeSite(remember).getString("grant"))
     }
     private fun adopt(access: PluginAcademicSession, grant: String) {
         access.requireGrant(grant); access.requireCredentials()
@@ -131,7 +156,7 @@ class ServicePluginSession(
         independentAuthenticated = !closed && !needsLogin
         if (!closed) adapter = createAdapter("")
     }
-    fun close() { closed = true; independentAuthenticated = false; sharedGrant = ""; adapter.clearLoginState(); adapter.session.retire() }
+    fun close() { sandboxConnection.close(); closed = true; independentAuthenticated = false; sharedGrant = ""; adapter.clearLoginState(); adapter.session.retire() }
     private fun ensureScope() {
         if (closed || !scopeStillActive()) { close(); throw AcademicException(AcademicStatus.SESSION_EXPIRED, "学校、账号或插件状态已改变，请重新打开校园服务") }
     }

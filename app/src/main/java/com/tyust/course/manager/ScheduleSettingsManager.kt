@@ -17,6 +17,8 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
         private set
     
     companion object {
+        const val PERIOD_COUNT_MIN = 8
+        const val PERIOD_COUNT_MAX = 16
         private const val PREFS_NAME = "schedule_settings"
         private const val KEY_SEMESTER_START = "semester_start"
         private const val KEY_PERIOD_TIMES = "period_times"
@@ -85,7 +87,8 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
     var periodCount: Int
         get() = getScopedInt(KEY_PERIOD_COUNT, 12)
         set(value) {
-            prefs?.edit()?.putInt(scopedKey(KEY_PERIOD_COUNT), value)?.remove(KEY_PERIOD_COUNT)?.apply()
+            prefs?.edit()?.putInt(scopedKey(KEY_PERIOD_COUNT), value)
+                ?.remove(scopedKey(KEY_PERIOD_COUNT) + "_provider")?.remove(KEY_PERIOD_COUNT)?.apply()
             revision++
         }
     
@@ -188,6 +191,12 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
     fun applyProviderCalendar(accountKey: String, calendar: JSONObject) {
         val p = prefs ?: return
         val edit = p.edit()
+        val countKey = "${KEY_PERIOD_COUNT}_$accountKey"
+        if ((!p.contains(countKey) || p.getBoolean(countKey + "_provider", false)) && !p.contains(KEY_PERIOD_COUNT)) {
+            providerPeriodCount(calendar.optJSONArray("periods"))?.let {
+                edit.putInt(countKey, it).putBoolean(countKey + "_provider", true)
+            }
+        }
         val timesKey = "${KEY_PERIOD_TIMES}_$accountKey"
         if ((!p.contains(timesKey) || p.getBoolean(timesKey + "_provider", false)) && !p.contains(KEY_PERIOD_TIMES)) {
             val times = JSONArray()
@@ -205,6 +214,18 @@ class ScheduleSettingsManager internal constructor(private var prefs: SharedPref
         }
         edit.apply()
         revision++
+    }
+
+    private fun providerPeriodCount(periods: JSONArray?): Int? {
+        if (periods == null || periods.length() == 0) return null
+        var maximum = 0
+        for (i in 0 until periods.length()) {
+            val number = (periods.optJSONObject(i)?.opt("number") as? Number)?.toDouble() ?: return null
+            // Contract calendar periods are integral 1..30. Do not infer from malformed data.
+            if (number !in 1.0..30.0 || number != number.toInt().toDouble()) return null
+            maximum = maxOf(maximum, number.toInt())
+        }
+        return maximum.coerceIn(PERIOD_COUNT_MIN, PERIOD_COUNT_MAX)
     }
     
     fun getDefaultPeriodTimes(): List<PeriodTime> {

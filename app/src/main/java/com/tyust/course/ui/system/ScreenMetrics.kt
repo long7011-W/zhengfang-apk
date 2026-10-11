@@ -50,6 +50,8 @@ data class ScreenMetrics(
     /** 横向紧凑度。宽 411 → 0，360 → 0.5。 */
     val narrow: Float
 ) {
+    val widthClass: String get() = windowWidthClass(widthDp.value)
+
     /** 按纵向紧凑度插值。[loose] 是现有的 20:9 尺寸，短屏收到 [tight]。 */
     fun tall(loose: Dp, tight: Dp): Dp = lerpDp(loose, tight, squeeze)
 
@@ -86,3 +88,5 @@ fun rememberScreenMetrics(): ScreenMetrics {
         )
     }
 }
+
+internal fun windowWidthClass(width: Float): String = when { width < 600f -> "compact"; width < 840f -> "medium"; else -> "expanded" }

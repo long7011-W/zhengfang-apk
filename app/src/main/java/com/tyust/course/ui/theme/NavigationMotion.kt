@@ -56,6 +56,7 @@ class NavigationMotionState(initial: Int, private val scope: CoroutineScope) {
     var pages by mutableStateOf(mapOf(initial to PageMotion()))
         private set
     val position: Float get() = startPosition + (endPosition - startPosition) * progress.value
+    val transitionFinished: Boolean get() = progress.value >= 1f && entrance.value >= 1f && !progress.isRunning && !entrance.isRunning
     fun weight(page: Int): Float = (1f - abs(position - page)).coerceIn(0f, 1f)
     fun moduleProgress(page: Int): Float {
         val start = entranceStarts[page] ?: 0f
@@ -123,9 +124,10 @@ val LocalNavigationMotion = staticCompositionLocalOf<NavigationMotionState?> { n
 @Composable
 fun rememberNavigationMotionState(selected: Int, account: String, reduced: Boolean): NavigationMotionState {
     val scope = rememberCoroutineScope()
-    val state = remember(account, scope) { NavigationMotionState(selected, scope) }
+    val state = remember(account, scope) { NavigationMotionState(selected.coerceAtLeast(0), scope) }
     DisposableEffect(state) { onDispose { state.dispose() } }
-    LaunchedEffect(state, selected, reduced) { state.select(selected, reduced) }
+    // An unpinned plugin page has no bottom-bar selection. Retain the last real position.
+    LaunchedEffect(state, selected, reduced) { if (selected >= 0) state.select(selected, reduced) }
     return state
 }
 

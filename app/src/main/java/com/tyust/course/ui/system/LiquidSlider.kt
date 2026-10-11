@@ -1,6 +1,7 @@
 package com.tyust.course.ui.system
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.progressSemantics
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.drag
@@ -15,6 +16,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -25,12 +27,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.scale
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.layout.layout
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.lerp
 import com.kyant.backdrop.Backdrop
@@ -81,11 +90,20 @@ fun LiquidSlider(
     value: () -> Float,
     onValueChange: (Float) -> Unit,
     valueRange: ClosedFloatingPointRange<Float>,
-    trackBrush: Brush,
+    /** Semantic gradient track. Null draws the iOS track: neutral groove plus an accent fill. */
+    trackBrush: Brush? = null,
     backdrop: Backdrop? = LocalControlBackdrop.current,
     modifier: Modifier = Modifier,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    /** Discrete points between the two ends, as in Material's Slider. */
+    steps: Int = 0,
+    accentColor: Color = Color.Unspecified
 ) {
+    require(valueRange.start.isFinite() && valueRange.endInclusive.isFinite() && valueRange.start < valueRange.endInclusive)
+    require(steps in 0..1000)
+    val darkSurface = MaterialTheme.colorScheme.surface.luminance() < 0.5f
+    val accent = accentColor.takeOrElse { if (darkSurface) Color(0xFF0091FF) else Color(0xFF0088FF) }
+    val groove = if (darkSurface) Color(0xFF787880).copy(alpha = 0.36f) else Color(0xFF787878).copy(alpha = 0.2f)
     val isLtr = LocalLayoutDirection.current == LayoutDirection.Ltr
     val span = valueRange.endInclusive - valueRange.start
     val visibilityThreshold = if (span > 0f) span / 400f else 0.001f
@@ -99,6 +117,8 @@ fun LiquidSlider(
     // 手势期间外部值不许再驱动动画：调用方会把我们刚发出的值原路送回来，
     // 两条路径同时对一个 Animatable 发 animateTo 会互相抢占，胶囊就卡住。
     var isDragging by remember { mutableStateOf(false) }
+    val latestValue by rememberUpdatedState(value)
+    val latestOnValueChange by rememberUpdatedState(onValueChange)
     val dampedDragAnimation = remember(animationScope, valueRange) {
         DampedDragAnimation(
             animationScope = animationScope,
@@ -117,9 +137,9 @@ fun LiquidSlider(
         dampedDragAnimation.setReducedMotion(accessibility.reduceMotion, value())
     }
     LaunchedEffect(dampedDragAnimation) {
-        snapshotFlow { value() }
-            .collectLatest { current ->
-                if (!isDragging && dampedDragAnimation.targetValue != current) {
+        snapshotFlow { latestValue() to isDragging }
+            .collectLatest { (current, dragging) ->
+                if (!dragging && dampedDragAnimation.targetValue != current) {
                     dampedDragAnimation.animateToValue(current)
                 }
             }
@@ -158,18 +178,31 @@ fun LiquidSlider(
         modifier = modifier
             .fillMaxWidth()
             .height(36.dp)
+            .progressSemantics(value().coerceIn(valueRange), valueRange, steps)
+            .semantics {
+                if (!enabled) disabled()
+                else setProgress { requested ->
+                    if (!requested.isFinite()) return@setProgress false
+                    val fraction = ((requested - valueRange.start) / span).coerceIn(0f, 1f)
+                    val snapped = if (steps > 0) kotlin.math.round(fraction * (steps + 1)) / (steps + 1) else fraction
+                    val target = valueRange.start + snapped * span
+                    if (target == value()) false else { onValueChange(target); true }
+                }
+            }
             .onSizeChanged { widthPx = it.width }
             .glassLensAnchor(sliderLensAnchor)
             .then(
                 if (enabled) {
-                    Modifier.pointerInput(widthPx, valueRange, isLtr) {
+                    Modifier.pointerInput(widthPx, valueRange, isLtr, steps) {
                         if (widthPx <= 0) return@pointerInput
                         // 可行程是「总宽 - thumb 宽」，thumb 才不会探出轨道两端
                         val thumbPx = 40.dp.toPx()
                         val travel = (widthPx - thumbPx).coerceAtLeast(1f)
                         fun valueAt(x: Float): Float {
                             val fraction = ((x - thumbPx / 2f) / travel).fastCoerceIn(0f, 1f)
-                            val along = if (isLtr) fraction else 1f - fraction
+                            val along = (if (isLtr) fraction else 1f - fraction).let {
+                                if (steps > 0) kotlin.math.round(it * (steps + 1)) / (steps + 1) else it
+                            }
                             return (valueRange.start + span * along)
                                 .fastCoerceIn(valueRange.start, valueRange.endInclusive)
                         }
@@ -180,7 +213,7 @@ fun LiquidSlider(
                                 dampedDragAnimation.press(down.uptimeMillis)
                                 val initial = valueAt(down.position.x)
                                 dampedDragAnimation.updateValue(initial, down.uptimeMillis)
-                                onValueChange(initial)
+                                latestOnValueChange(initial)
                                 // 值一变环境背景就可能整张变（蒙版/模糊滑块改的
                                 // 就是壁纸本身），底图要跟着重拍。限频在
                                 // GlassLensFreshness 里。
@@ -188,7 +221,7 @@ fun LiquidSlider(
                                 drag(down.id) { change ->
                                     val target = valueAt(change.position.x)
                                     dampedDragAnimation.updateValue(target, change.uptimeMillis)
-                                    onValueChange(target)
+                                    latestOnValueChange(target)
                                     lensFreshness?.onScroll()
                                     change.consume()
                                 }
@@ -207,13 +240,28 @@ fun LiquidSlider(
         contentAlignment = Alignment.CenterStart
     ) {
         // 轨道层：渐变胶囊，单独进入捕获层供 thumb 折射
-        Box(Modifier.layerBackdrop(trackBackdrop)) {
+        Box(Modifier.layerBackdrop(trackBackdrop), contentAlignment = Alignment.CenterStart) {
             Box(
                 Modifier
                     .clip(Capsule())
-                    .background(trackBrush)
+                    .then(if (trackBrush != null) Modifier.background(trackBrush) else Modifier.background(groove))
                     .height(6.dp)
                     .fillMaxWidth()
+            )
+            if (trackBrush == null) Box(
+                Modifier
+                    .layout { measurable, constraints ->
+                        // Fill reaches the thumb centre; read in layout so dragging skips recomposition.
+                        val thumb = 40.dp.roundToPx()
+                        val fraction = ((dampedDragAnimation.value - valueRange.start) / span).fastCoerceIn(0f, 1f)
+                        val width = (thumb / 2f + (constraints.maxWidth - thumb).coerceAtLeast(0) * fraction)
+                            .toInt().coerceIn(0, constraints.maxWidth)
+                        val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+                        layout(width, placeable.height) { placeable.place(0, 0) }
+                    }
+                    .clip(Capsule())
+                    .background(if (enabled) accent else accent.copy(alpha = 0.38f))
+                    .height(6.dp)
             )
         }
 

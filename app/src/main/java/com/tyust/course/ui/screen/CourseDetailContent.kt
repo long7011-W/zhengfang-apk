@@ -44,7 +44,8 @@ data class CourseDetailUiState(
     val needsTime: Boolean = false,
     val invalidWeeks: Boolean = false,
     val sourceCenterX: Float? = null,
-    val timeRange: String = ""
+    val timeRange: String = "",
+    val currentWeek: Int = 0
 )
 
 /** Content-sized sheet with a bounded scroll body and a persistent, single primary action. */
@@ -52,7 +53,8 @@ data class CourseDetailUiState(
 fun CourseDetailContent(
     ui: CourseDetailUiState, sheet: ScheduleBottomSheetState, onClose: () -> Unit,
     onReminderChanged: (Boolean) -> Unit, onPermission: () -> Unit,
-    onConfigureTime: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit
+    onConfigureTime: () -> Unit, onEdit: () -> Unit, onDelete: () -> Unit,
+    extraActions: @Composable () -> Unit = {}
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
@@ -64,7 +66,7 @@ fun CourseDetailContent(
     val connection = remember(sheet) { sheet.nestedScroll { latestClose() } }
     SideEffect { sheet.density = density.density; sheet.reducedMotion = reduced }
     val course = ui.course
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
+    BoxWithConstraints(Modifier.widthIn(max = 560.dp).fillMaxWidth()) {
         val wideDetails = maxWidth >= 360.dp && density.fontScale <= 1.2f && course.location.length <= 18
         val compactHeight = maxHeight < 420.dp
         val titleDrift = ui.sourceCenterX?.let { (it - with(density) { maxWidth.toPx() } / 2f)
@@ -127,6 +129,15 @@ fun CourseDetailContent(
                             DetailInfoLine("教师", course.teacher.ifBlank { "未指定教师" }, AnimatedIconSpec.Person)
                             DetailInfoLine("周次", course.weeks.ifBlank { "待补全" }, AnimatedIconSpec.Calendar)
                         }
+                        var allWeeks by remember(course.id) { mutableStateOf(false) }
+                        val details = course.details.filter { allWeeks || ui.currentWeek == 0 || it.weeks == null || ui.currentWeek in it.weeks }
+                        details.filter { it.value.isNotBlank() }.forEach { field ->
+                            Column(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
+                                Text(field.label + (field.weeks?.let { " · 第 ${it.joinToString("、")} 周" } ?: ""), style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                                androidx.compose.foundation.text.selection.SelectionContainer { Text(field.value, style = MaterialTheme.typography.bodyMedium) }
+                            }
+                        }
+                        if (course.details.any { it.weeks != null }) TextButton(onClick = { allWeeks = !allWeeks }) { Text(if (allWeeks) "只看当前周" else "查看其他周次的课程信息") }
                         if (ui.invalidWeeks) Text("周次待核对，暂不能安排提醒。", color = colors.error, style = MaterialTheme.typography.bodySmall)
                         ui.conflicts.forEach { conflict ->
                             Surface(color = colors.errorContainer, shape = RoundedCornerShape(14.dp)) {
@@ -160,6 +171,7 @@ fun CourseDetailContent(
                             if (ui.needsTime) SystemSecondaryButton("设置学期时间", onConfigureTime, Modifier.fillMaxWidth())
                         }
                     }
+                    extraActions()
                     Spacer(Modifier.height(2.dp))
                 }
                 if (course.isCustom) {

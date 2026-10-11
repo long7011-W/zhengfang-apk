@@ -20,6 +20,7 @@ class CourseApplication : Application() {
         }
         if (processName == packageName) {
             mainProcess = true
+            com.tyust.course.announcement.AnnouncementManager.initialize(this)
             com.tyust.course.diagnostics.AppDiagnostics.install(this)
             com.tyust.course.academic.plugin.AcademicProviderRegistry.initialize(this)
             com.tyust.course.academic.plugin.PluginPages.initialize(this)

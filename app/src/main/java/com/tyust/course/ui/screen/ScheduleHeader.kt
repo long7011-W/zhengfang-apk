@@ -25,7 +25,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -118,9 +117,10 @@ fun WeekHeaderCompact(
     val fontScale = density.fontScale
     val lift = collapseFraction.coerceIn(0f, 1f)
     val collapsedControls = lift >= 0.5f
-    val headerBackdrop = if (sampleBackdrop != null) rememberLayerBackdrop() else null
-    val controlBackdrop = if (sampleBackdrop != null && headerBackdrop != null)
-        rememberCombinedBackdrop(sampleBackdrop, headerBackdrop) else null
+    val effectiveBackdrop = sampleBackdrop?.takeIf { isBackdropSupported() }
+    val headerBackdrop = if (effectiveBackdrop != null) rememberLayerBackdrop() else null
+    val controlBackdrop = if (effectiveBackdrop != null && headerBackdrop != null)
+        rememberCombinedBackdrop(effectiveBackdrop, headerBackdrop) else null
     val headerLens = if (controlBackdrop != null) rememberGlassLensRegion(
         "schedule-header", currentWeek, selectedDay, lift >= 0.99f,
         freshness = LocalPageGlassFreshness.current
@@ -132,14 +132,9 @@ fun WeekHeaderCompact(
         Box(Modifier.matchParentSize().then(if (headerBackdrop != null) Modifier.layerBackdrop(headerBackdrop) else Modifier)) {
             val floatingPanel = Modifier.fillMaxSize().padding(start = 10.dp, end = 10.dp,
                 top = statusHeight + 4.dp, bottom = 4.dp)
-            if (sampleBackdrop != null) {
-                StatusBarFrost(statusHeight + 1.dp, lift, sampleBackdrop)
-                HeaderGlassSlab(strength = lift, backdrop = sampleBackdrop, cornerRadius = 26.dp,
-                    modifier = floatingPanel)
-            } else {
-                Box(floatingPanel.shadow(8.dp * lift, RoundedCornerShape(26.dp), clip = false)
-                    .background(colors.surface.copy(alpha = lift), RoundedCornerShape(26.dp)))
-            }
+            StatusBarFrost(statusHeight + 1.dp, lift, effectiveBackdrop)
+            HeaderGlassSlab(strength = lift, backdrop = effectiveBackdrop, cornerRadius = 26.dp,
+                modifier = floatingPanel)
         }
         CompositionLocalProvider(LocalControlBackdrop provides controlBackdrop, LocalGlassLensAnchor provides headerLens) {
         Column(Modifier.fillMaxWidth().statusBarsPadding()) {

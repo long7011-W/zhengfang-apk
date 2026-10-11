@@ -13,6 +13,12 @@ internal object PluginSecurityContract {
             val canonical = url.newBuilder().encodedPath("/").query(null).fragment(null).build().toString().removeSuffix("/")
             if (url.username.isNotEmpty() || url.password.isNotEmpty() || '*' in url.host || value != canonical || https && !url.isHttps) invalid()
         }
+        manifest.json.optJSONObject("academicSharing")?.let { sharing ->
+            if (manifest.kind != "configuration" && "auth.start" !in manifest.capabilities) invalid()
+            if (manifest.json.optJSONArray("requires")?.let(PluginJson::objects).orEmpty().none { it.optString("name") == "academic.session.authorize" && it.optInt("version") >= 2 }) invalid()
+            val seen = mutableSetOf<String>()
+            for (value in PluginJson.strings(sharing.getJSONArray("origins"))) { origin(value, true); if (!seen.add(value)) invalid() }
+        }
         for (item in manifest.json.optJSONArray("dataDisclosure")?.let(PluginJson::objects).orEmpty()) {
             val value = item.getString("origin"); origin(value, true)
             if (!destinations.add(value)) invalid()

@@ -9,6 +9,16 @@ import org.junit.Test
 import java.util.concurrent.TimeUnit
 
 class AcademicSessionReplacementTest {
+    @Test fun retiredSessionIsNeverReusedWhenItsOwnerRestoresLogin() {
+        val store = AcademicSessionStore()
+        val old = store.session("school", "a", "https://example.edu/")
+        old.retire()
+        assertNull(store.existing("school", "a", "https://example.edu/"))
+        val restored = store.session("school", "a", "https://example.edu/")
+        assertNotSame(old, restored); assertFalse(restored.retired)
+        assertSame(restored, store.existing("school", "a", "https://example.edu/"))
+    }
+
     @Test fun lateResponseCannotRepopulateReplacedCookieOrReturnData() = runBlocking {
         val server = MockWebServer()
         server.start()

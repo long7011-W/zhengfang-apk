@@ -56,8 +56,10 @@ internal fun MeasuredGradesHeader(
     val share by animateFloatAsState(if (showShare) 1f else 0f,
         if (reduced) androidx.compose.animation.core.snap() else MotionProfile.iconSpring(), label = "grade-share")
     val statusBar = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    val layer = rememberLayerBackdrop()
-    val controlBackdrop = if (backdrop != null) rememberCombinedBackdrop(backdrop, layer) else null
+    val effectiveBackdrop = backdrop?.takeIf { isBackdropSupported() }
+    val layer = if (effectiveBackdrop != null) rememberLayerBackdrop() else null
+    val controlBackdrop = if (effectiveBackdrop != null && layer != null)
+        rememberCombinedBackdrop(effectiveBackdrop, layer) else null
     val anchor = if (controlBackdrop != null) rememberGlassLensRegion("grades-chips", selected, refreshing, showShare,
         (p * 8).toInt(), freshness = LocalPageGlassFreshness.current,
         drawSource = { drawBackdropSource(controlBackdrop, density, it) }) else null
@@ -69,9 +71,9 @@ internal fun MeasuredGradesHeader(
 
     ProvideWallpaperAppearance(appearance) {
     Box(Modifier.fillMaxWidth().wallpaperRegion(wallpaperRegion).glassLensAnchor(anchor).then(wallpaperHeaderScrim())) {
-        if (backdrop != null) Box(Modifier.matchParentSize().layerBackdrop(layer)) {
-            StatusBarFrost(statusBar + 1.dp, p, backdrop)
-            HeaderGlassSlab(((p - 0.35f) / 0.65f).coerceIn(0f, 1f), backdrop, 26.dp,
+        Box(Modifier.matchParentSize().then(if (layer != null) Modifier.layerBackdrop(layer) else Modifier)) {
+            StatusBarFrost(statusBar + 1.dp, p, effectiveBackdrop)
+            HeaderGlassSlab(((p - 0.35f) / 0.65f).coerceIn(0f, 1f), effectiveBackdrop, 26.dp,
                 Modifier.fillMaxSize().padding(start = 12.dp, end = 12.dp, top = statusBar + 6.dp, bottom = 4.dp))
         }
         CompositionLocalProvider(LocalControlBackdrop provides controlBackdrop, LocalGlassLensAnchor provides anchor) {
@@ -84,7 +86,8 @@ internal fun MeasuredGradesHeader(
                         color = appearance.onSurfaceVariant, maxLines = 2)
                 }
                 LiquidSegmentedControl(tabs, selected, onSelect,
-                    modifier = Modifier.testTag("grades-segments"), height = 52.dp - 4.dp * p)
+                    modifier = Modifier.testTag("grades-segments"), height = 52.dp - 4.dp * p,
+                    refractLabels = false, stableLabelRefraction = true)
                 TopBarActionRail(modifier = Modifier.testTag("grades-actions")) {
                     action(0, Icons.Default.Share, "导出成绩", onShare, enabled = showShare && shareEnabled && !refreshing,
                         presence = share)

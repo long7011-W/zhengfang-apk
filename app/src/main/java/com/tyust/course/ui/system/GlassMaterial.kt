@@ -64,8 +64,15 @@ data class GlassAccessibilityMode(
     val highContrast: Boolean
 )
 
-/** Persistent glass tint: legibility comes from backdrop blur, not an opaque sheet. */
+/** Dialog/sheet tint. Dropdown menus deliberately use their own lighter surface. */
 internal fun modalSurfaceAlpha(dark: Boolean, highContrast: Boolean): Float = when {
+    highContrast -> 0.96f
+    dark -> 0.84f
+    else -> 0.78f
+}
+
+/** Preserve dropdown glass independently of dialog readability adjustments. */
+internal fun dropdownSurfaceAlpha(dark: Boolean, highContrast: Boolean): Float = when {
     highContrast -> 0.96f
     dark -> 0.22f
     else -> 0.18f

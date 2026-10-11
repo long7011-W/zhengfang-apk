@@ -65,6 +65,28 @@ class PluginPrivacyPolicyTest {
         assertThrows(PluginException::class.java) { PluginSecretResponse.requireSafe("ok".toByteArray(), "https://school.example/?t=synthetic-secret", listOf("synthetic-secret")) }
         PluginSecretResponse.requireSafe("synthetic-grade".toByteArray(), "https://school.example", listOf("synthetic-secret"))
     }
+    @Test fun siteOriginsAcceptIpv6AndRejectCredentialsOrOtherPorts() {
+        val url = "https://[::1]/api/read".toHttpUrl()
+        val origins = setOf(PluginAuthScope.origin(url))
+        PluginSiteConsent.requireRequest(origins, url, "GET", "query")
+        for (bad in listOf("https://[::1]:8443/api/read", "https://user:secret@[::1]/api/read"))
+            assertThrows(PluginException::class.java) { PluginSiteConsent.requireRequest(origins, bad.toHttpUrl(), "GET", "query") }
+    }
+
+    @Test fun reviewProofBindsTheExactPackageAndPermissionsAndManifestCannotSelfCertify() {
+        val p = pkg(digest = "a".repeat(64))
+        val scope = JSONObject()
+        for (name in listOf("academicSharing", "network", "permissions", "dataDisclosure", "sharedOperations")) scope.put(name, p.manifest.json.opt(name) ?: JSONObject.NULL)
+        val proof = JSONObject().put("version", 1).put("packageSha256", p.digest).put("sourceSha256", "b".repeat(64))
+            .put("scopeSha256", PluginJson.sha256(PluginJson.canonical(scope).toByteArray()))
+            .put("reviewedAt", "2026-09-30T00:00:00Z").put("contractVersion", "3.2.5").put("ruleVersion", "synthetic")
+        assertTrue(PluginReviewProof.matches(p, proof))
+        assertFalse(PluginReviewProof.matches(p.copy(digest = "changed"), proof))
+        val expanded = p.copy(manifest = PluginManifest(JSONObject(p.manifest.json.toString()).put("permissions", JSONArray(listOf("academic.read", "network", "files")))))
+        assertFalse(PluginReviewProof.matches(expanded, proof))
+        assertFalse(PluginReviewProof.reviewed(p.copy(manifest = PluginManifest(JSONObject(p.manifest.json.toString()).put("securityReview", proof)))))
+    }
+
     @Test fun callerCannotDeclareAnUnreviewedLowRiskOperation() {
         val parameter = JSONObject().put("type","object").put("properties",JSONObject()).put("additionalProperties",false)
         val declaration=JSONObject().put("id","seen").put("title","Read state").put("origin","https://school.example").put("path","/seen").put("method","POST").put("purpose","mutation").put("risk","read-state").put("query",parameter).put("form",parameter)

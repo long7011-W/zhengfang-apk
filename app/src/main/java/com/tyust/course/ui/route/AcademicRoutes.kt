@@ -52,8 +52,20 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-fun AcademicCourseListRoute(school: SchoolConfig) {
+fun AcademicCourseListRoute(school: SchoolConfig, isActive: Boolean = true) {
+    val providerRevision by com.tyust.course.academic.plugin.AcademicProviderRegistry.revision.collectAsState()
+    val provider = remember(school, providerRevision) {
+        com.tyust.course.academic.plugin.AcademicProviderRegistry.operationProvider(school, "selection.courses")?.digest.orEmpty()
+    }
+    val account = UserManager.getInstance().currentAccountStorageKey
+    val session by UserManager.getInstance().sessionState.state.collectAsState()
+    key(account, provider, session.token) { AcademicCourseListContent(school, "$account:$provider:${session.token}", isActive) }
+}
+
+@Composable
+private fun AcademicCourseListContent(school: SchoolConfig, cacheKey: String, isActive: Boolean) {
     if (!com.tyust.course.academic.plugin.AcademicProviderRegistry.hasCapability(school, "selection.courses")) {
+        ReportInitialPageReady()
         AcademicCapabilityUnavailable("课程", "该学校尚未适配选课查询"); return
     }
     val context = LocalContext.current
@@ -64,13 +76,16 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
     val expectedSession = session.token
     var tab by rememberSaveable(account) { mutableIntStateOf(0) }
     var selectedCategory by rememberSaveable(account) { mutableStateOf("") }
-    var courses by rememberPageData<List<Course>>("academic.courses.$selectedCategory") { emptyList() }
-    var coursesLoaded by rememberPageData("academic.courses.loaded.$selectedCategory") { false }
-    var loading by remember(account) { mutableStateOf(true) }
+    val browser by rememberPageData("academic.browser.$cacheKey") { AcademicCourseBridge.browser(school, account, expectedSession) }
+    val browserState by browser.state.collectAsState()
+    ReportInitialPageReady(browserState.courses.isNotEmpty() || browserState.error.isNotBlank() ||
+        (browserState.context != null && !browserState.loading))
+    val courses = browserState.courses
+    val loading = browserState.loading
+    val error = browserState.error
+    val categories = browserState.context?.scopes.orEmpty()
     var query by rememberSaveable(account) { mutableStateOf("") }
     var searchVisible by rememberSaveable(account) { mutableStateOf(false) }
-    var error by remember(account) { mutableStateOf("") }
-    var categories by rememberPageData<List<CourseScope>>("academic.categories") { emptyList() }
     var revision by remember(account) { mutableIntStateOf(0) }
     var selectedRevision by remember(account) { mutableIntStateOf(0) }
     var pendingSelection by remember(account) { mutableStateOf<Course?>(null) }
@@ -80,36 +95,34 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
     var batchConfirmation by remember(account) { mutableStateOf<List<Course>?>(null) }
     var selecting by remember(account) { mutableStateOf(false) }
     var batchJob by remember(account) { mutableStateOf<Job?>(null) }
-    var filter by rememberPageData("academic.courses.filter") { AcademicCourseFilter() }
+    val websiteFilters = remember { com.tyust.course.academic.plugin.AcademicProviderRegistry.hasCapability(school, "selection.filters") }
+    val definitions = browserState.filters
+    val filtersError = browserState.filterError
+    var appliedWebsiteFilters by rememberPageData<CourseFilterValues?>("academic.courses.$cacheKey.filters") { null }
+    var draftWebsiteValues by remember { mutableStateOf<Map<String, List<String>>>(emptyMap()) }
+    var serverQuery by rememberPageData("academic.courses.$cacheKey.keyword") { "" }
+    LaunchedEffect(query) { kotlinx.coroutines.delay(300); serverQuery = query }
+    var filter by rememberPageData("academic.courses.$cacheKey.filter") { AcademicCourseFilter() }
     var draftFilter by remember(account) { mutableStateOf(filter) }
     var showFilters by remember(account) { mutableStateOf(false) }
-    val visibleCourses = remember(courses, query, filter) { courses.filter {
+    val visibleCourses = remember(courses, query, filter, websiteFilters) { if (websiteFilters) courses else courses.filter {
         (query.isBlank() || listOf(it.name, it.teacher, it.courseId, it.jxbmc).any { value -> value.contains(query, true) }) && filter.matches(it)
     } }
 
-    LaunchedEffect(account, selectedCategory, revision, expectedSession) {
-        if (revision == 0 && coursesLoaded) { loading = false; return@LaunchedEffect }
-        loading = true
-        error = ""
-        try {
-            val page = withContext(Dispatchers.IO) { AcademicCourseBridge.listCourses(school, account, CourseQuery(scopeId = selectedCategory), expectedSession) }
-            if (sessions.isCurrent(expectedSession)) {
-                courses = page.courses
-                categories = page.context.scopes
-                coursesLoaded = true
-            }
-        } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { if (sessions.isCurrent(expectedSession)) error = e.message ?: "课程加载失败，请重试" }
-        finally { if (sessions.isCurrent(expectedSession) && kotlinx.coroutines.currentCoroutineContext()[Job]?.isActive == true) loading = false }
+    LaunchedEffect(selectedCategory, revision, appliedWebsiteFilters, serverQuery) {
+        browser.open(CourseQuery(scopeId = selectedCategory, keyword = serverQuery, filters = appliedWebsiteFilters), refresh = revision > 0)
     }
-
-    LaunchedEffect(expectedSession) {
-        error = ""
-        pendingSelection = null
-        batchConfirmation = null
-        selecting = false
-        batchJob?.cancel()
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    var foreground by remember { mutableStateOf(lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) }
+    DisposableEffect(browser, lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ ->
+            foreground = lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer); browser.setActive(false) }
     }
+    SideEffect { browser.setActive(foreground && isActive && tab == 0); browser.setBusy(selecting) }
+    LaunchedEffect(courses) { checkedIds = checkedIds.intersect(courses.map { it.catalogSelectionKey() }.toSet()) }
 
     fun select(course: Course) {
         if (selecting) return
@@ -158,7 +171,17 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                     action(index = 1, icon = Icons.Default.Refresh, contentDescription = "刷新课程",
                         onClick = { if (tab == 0) revision++ else selectedRevision++ })
                     action(index = 2, icon = Icons.Default.FilterList, contentDescription = "筛选课程",
-                        onClick = { draftFilter = filter; showFilters = true }, presence = if (tab == 0) 1f else 0f)
+                        enabled = !websiteFilters || !loading && categories.isNotEmpty(),
+                        onClick = {
+                            if (websiteFilters) {
+                                when {
+                                    loading -> GlassToaster.show("正在读取选课状态")
+                                    categories.isEmpty() -> GlassToaster.show("选课未开放，暂无法获取筛选条件")
+                                    selectedCategory.isBlank() -> GlassToaster.show("请先选择一个轮次，再使用学校筛选")
+                                    else -> { draftWebsiteValues = appliedWebsiteFilters?.values.orEmpty(); showFilters = true }
+                                }
+                            } else { draftFilter = filter; showFilters = true }
+                        }, presence = if (tab == 0) 1f else 0f)
                 }
             }
             if (tab == 0) {
@@ -180,8 +203,11 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                 }
                 if (categories.isNotEmpty()) SystemPicker(
                     options = listOf(if (school.academicSystem == AcademicSystem.ZF_OLD.id) "全部课程类别" else "全部轮次与分类") + categories.map { it.name },
-                    selectedIndex = categories.indexOfFirst { it.id == selectedCategory } + 1,
-                    onSelect = { index -> selectedCategory = if (index == 0) "" else categories[index - 1].id },
+                    selectedIndex = (categories.indexOfFirst { it.id == selectedCategory } + 1).coerceAtLeast(0),
+                    onSelect = { index ->
+                        selectedCategory = if (index == 0) "" else categories[index - 1].id
+                        appliedWebsiteFilters = null; draftWebsiteValues = emptyMap(); showFilters = false
+                    },
                     label = if (school.academicSystem == AcademicSystem.ZF_OLD.id) "类别" else "轮次",
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                     maxLabelLines = if (school.academicSystem == AcademicSystem.ZF_OLD.id) 1 else 2
@@ -206,19 +232,21 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                     Text("当前为退选阶段，可查看课程和办理退课", style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
                 }
-                if (error.isNotBlank()) {
+                if (error.isNotBlank() && courses.isEmpty()) {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
                         SystemEmptyState(title = "课程加载失败", message = error) {
-                            SystemSecondaryButton(text = "重新加载", onClick = { revision++ })
+                            SystemSecondaryButton(text = "重新加载", onClick = { appliedWebsiteFilters = null; revision++ })
                         }
                     }
                 } else if (!loading && categories.isEmpty()) {
                     Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
-                        SystemEmptyState(title = "当前暂无选课轮次", message = "学校开放选课后，可在这里刷新查看。已选课程、课表和成绩仍可正常查询。") {
+                        SystemEmptyState(title = "选课未开放", message = "选课未开放，暂无法获取筛选条件。学校开放后请刷新；课表和成绩仍可查询。") {
                             SystemSecondaryButton(text = "刷新轮次", onClick = { revision++ })
                         }
                     }
-                } else key(account, selectedCategory) {
+                } else key(account, selectedCategory, serverQuery, appliedWebsiteFilters) {
+                    if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 20.dp))
+
                     CourseListScreen(
                         courses = visibleCourses,
                         isLoading = loading, onRefresh = { revision++ }, onSearch = { query = it },
@@ -230,38 +258,15 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                         isMultiSelectMode = multiSelect, selectedClassIds = checkedIds, isBatchSelecting = selecting,
                         onToggleSelection = { id, selected -> checkedIds = if (selected) checkedIds - id else checkedIds + id },
                         onEnterMultiSelect = { id -> if (!selecting) { multiSelect = true; checkedIds = setOf(id) } },
-                        onFetchDetails = { classes, complete ->
-                            if (school.academicSystem in setOf(AcademicSystem.QZ.id, AcademicSystem.QZ_OLD.id)) {
-                                complete(classes.isNotEmpty())
-                            } else {
-                                val requestCategory = selectedCategory
-                                val requestRevision = revision
-                                scope.launch {
-                                    try {
-                                        val sections = withContext(Dispatchers.IO) {
-                                            // 同一课程组的行是同一门课的教学班（正方列表按教学班粒度返回），
-                                            // 每个选课分类只需取一行请求；逐行请求会在几十行的组上串行几十轮。
-                                            classes.distinctBy { it.completeParams["academic_scope_id"] }.flatMap { request ->
-                                                AcademicCourseBridge.listSections(school, account, request, expectedSession)
-                                            }.distinctBy { it.completeParams["academic_scope_id"] to it.classId }
-                                        }
-                                        if (!sessions.isCurrent(expectedSession) || selectedCategory != requestCategory || revision != requestRevision) return@launch
-                                        classes.forEach { requested ->
-                                            courses = AcademicCourseBridge.mergeSections(courses, requested,
-                                                sections.filter { it.completeParams["academic_scope_id"] == requested.completeParams["academic_scope_id"] })
-                                        }
-                                        complete(sections.isNotEmpty())
-                                        if (sections.isEmpty()) GlassToaster.show("当前课程没有可查看的教学班，请刷新重试")
-                                    } catch (e: CancellationException) { throw e }
-                                    catch (e: Exception) {
-                                        if (sessions.isCurrent(expectedSession) && selectedCategory == requestCategory && revision == requestRevision) {
-                                            complete(false)
-                                            GlassToaster.show(e.message ?: "教学班加载失败，请重试")
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                        browserState = browserState,
+                        onVisibleGroups = browser::visible,
+                        onToggleGroup = browser::toggle,
+                        onExpandAll = browser::expandAll,
+                        onCollapseAll = browser::collapseAll,
+                        onStopPreload = browser::stopBulk,
+                        onRetryPreload = browser::retryFailed,
+                        onLoadMore = browser::loadMore,
+                        localFilterNotice = !websiteFilters && filter.active
                     )
                 }
             }
@@ -289,7 +294,13 @@ fun AcademicCourseListRoute(school: SchoolConfig) {
                 }
             })
     }
-    if (showFilters) SystemDialog(onDismissRequest = { showFilters = false }, title = { Text("课程筛选") },
+    if (showFilters && websiteFilters) com.tyust.course.ui.screen.AcademicWebsiteFiltersDialog(
+        definitions = definitions, error = filtersError, loading = loading, values = draftWebsiteValues,
+        onValuesChange = { draftWebsiteValues = it }, onDismiss = { showFilters = false },
+        onRetry = { appliedWebsiteFilters = null; draftWebsiteValues = emptyMap(); revision++ },
+        onApply = { definitions?.let { appliedWebsiteFilters = CourseFilterValues(it.revision, draftWebsiteValues); revision++ }; showFilters = false },
+        onClear = { draftWebsiteValues = emptyMap(); appliedWebsiteFilters = null; showFilters = false; revision++ })
+    if (showFilters && !websiteFilters) SystemDialog(onDismissRequest = { showFilters = false }, title = { Text("课程筛选") },
         confirmButton = { SystemPrimaryButton(text = "应用", enabled = draftFilter.credit.isBlank() || draftFilter.credit.toDoubleOrNull()?.let { it.isFinite() && it >= 0 } == true,
             onClick = { filter = draftFilter; showFilters = false }) },
         dismissButton = { SystemSecondaryButton(text = "清除", onClick = { filter = AcademicCourseFilter(); draftFilter = filter; showFilters = false }) }) {

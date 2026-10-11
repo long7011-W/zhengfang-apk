@@ -63,6 +63,7 @@ class LoginActivity : ComponentActivity() {
     private var validationJob: kotlinx.coroutines.Job? = null
 
     // Binding Dialog State
+    private var showBindingManager by mutableStateOf(false)
     private var showBindingDialog by mutableStateOf(false)
     private var bindingStudentName by mutableStateOf("")
     private var bindingStudentId by mutableStateOf("")
@@ -146,12 +147,15 @@ class LoginActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         com.tyust.course.ui.theme.StartupLogoAnimation.install(this)
         super.onCreate(savedInstanceState)
+        applyAdaptiveOrientation()
         
         // Initialize UserManager with context for SharedPreferences
         UserManager.getInstance().init(this)
         selectedLoginSchool = savedInstanceState?.getString("login_school")?.let { UserManager.getInstance().getSchoolById(it) }
             ?: UserManager.getInstance().currentSchool
         manualLoginInteraction = savedInstanceState?.getBoolean("manual_login") ?: false
+        loginContextRevision = savedInstanceState?.getInt("login_context_revision") ?: 0
+        if (savedInstanceState?.getBoolean("login_inflight") == true) errorMessage = "窗口已重建，上次登录已中断，请重试；不会自动重复提交。"
         
             // 🔄 每次启动 App 都同步云端激活配置（获取最新的 max_students）
         lifecycleScope.launch {
@@ -228,6 +232,7 @@ class LoginActivity : ComponentActivity() {
                     onDemoMode = {
                         handleDemoMode()
                     },
+                    onManageBindings = { manualLoginInteraction = true; showBindingManager = true },
                     onServiceCenter = { startActivity(Intent(this@LoginActivity, com.tyust.course.academic.plugin.CampusServiceCenterActivity::class.java)) },
                     onSchoolAdaptation = {
                         showSchoolAdaptation = true
@@ -280,6 +285,7 @@ class LoginActivity : ComponentActivity() {
                         !isLoading &&
                         !isAutoValidating
                 )
+                if (showBindingManager) com.tyust.course.ui.system.BindingManagementDialog { showBindingManager = false }
                 com.tyust.course.ui.screen.UsageNotice()
             }
         }
@@ -288,6 +294,8 @@ class LoginActivity : ComponentActivity() {
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putString("login_school", selectedLoginSchool?.id)
         outState.putBoolean("manual_login", manualLoginInteraction)
+        outState.putInt("login_context_revision", loginContextRevision)
+        outState.putBoolean("login_inflight", isLoading || captchaImageBytes != null)
         super.onSaveInstanceState(outState)
     }
 
@@ -566,6 +574,13 @@ class LoginActivity : ComponentActivity() {
                 return
             }
         }
+        synchronized(com.tyust.course.manager.StudentLimitManager) {
+            val school = selectedLoginSchool ?: return
+            if (!com.tyust.course.manager.StudentLimitManager.recordStudent(this, school.id, school.name, studentName, bindingStudentId)) {
+                errorMessage = "名额不足，请管理本机绑定后重试"
+                discardPendingPasswordLogin()
+                return
+            }
         userManager.currentSchool = selectedLoginSchool ?: return
         userManager.isLoggedIn = true
         userManager.studentId = bindingStudentId
@@ -580,6 +595,7 @@ class LoginActivity : ComponentActivity() {
             )
         } else {
             userManager.saveCookieLogin(cookieStr.trim())
+        }
         }
         discardPendingPasswordLogin()
         Log.d(TAG, "Cookie 已保存，下次可自动登录")

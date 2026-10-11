@@ -1,5 +1,136 @@
 [
   {
+    "name": "ui.components",
+    "version": 3,
+    "permission": "pages",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "types": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 40
+          },
+          "maxItems": 32
+        },
+        "buttonVariants": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 24
+          },
+          "maxItems": 8
+        },
+        "buttonSizes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "maxLength": 24
+          },
+          "maxItems": 8
+        }
+      },
+      "required": [
+        "types",
+        "buttonVariants",
+        "buttonSizes"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "ui.navigation",
+    "version": 1,
+    "permission": "pages",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "maxDepth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8
+        }
+      },
+      "required": [
+        "maxDepth"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "ui.viewport",
+    "version": 1,
+    "permission": "pages",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "widthDp": {
+          "type": "number",
+          "minimum": 0
+        },
+        "heightDp": {
+          "type": "number",
+          "minimum": 0
+        },
+        "widthClass": {
+          "enum": [
+            "compact",
+            "medium",
+            "expanded"
+          ]
+        },
+        "fontScale": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      },
+      "required": [
+        "widthDp",
+        "heightDp",
+        "widthClass",
+        "fontScale"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
     "name": "pages.register",
     "version": 1,
     "permission": "pages",
@@ -49,7 +180,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "pages.open",
@@ -76,7 +208,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "pages.close",
@@ -93,7 +226,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "pages.unregister",
@@ -117,7 +251,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "services.discover",
@@ -195,7 +330,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "services.call",
@@ -250,7 +386,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "workflow.prepare",
@@ -326,7 +463,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "workflow.step",
@@ -354,7 +492,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "workflow.reconcile",
@@ -382,7 +521,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "workflow.cancel",
@@ -410,7 +550,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "workflow.list",
@@ -433,7 +574,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "academic.study.snapshot",
@@ -457,7 +599,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "academic.study.refresh",
@@ -481,7 +624,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "academic.schedule.preview",
@@ -514,7 +658,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "academic.schedule.confirm",
@@ -542,7 +687,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "accounts.select",
@@ -580,7 +726,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "accounts.remove",
@@ -611,7 +758,1024 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
+  },
+  {
+    "name": "userscript.status",
+    "version": 1,
+    "permission": "userscripts",
+    "input": {
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "userscript.update",
+    "version": 1,
+    "permission": "userscripts",
+    "input": {
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "userscript.rollback",
+    "version": 1,
+    "permission": "userscripts",
+    "input": {
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "userscript.start",
+    "version": 2,
+    "permission": "userscripts",
+    "input": {
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://",
+          "minLength": 9
+        }
+      },
+      "required": [
+        "scriptId",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "userscript.control",
+    "version": 1,
+    "permission": "userscripts",
+    "input": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+        },
+        "action": {
+          "enum": [
+            "start",
+            "stop",
+            "open",
+            "settings"
+          ]
+        },
+        "values": {
+          "type": "object",
+          "maxProperties": 32
+        }
+      },
+      "required": [
+        "handle",
+        "action"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "userscript.interact",
+    "version": 1,
+    "permission": "userscripts",
+    "input": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+        },
+        "interactionId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+        },
+        "actionId": {
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "maxLength": 128,
+              "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+            },
+            "field": {
+              "type": "string",
+              "maxLength": 96,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+            }
+          },
+          "required": [
+            "handle",
+            "field"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "handle",
+        "interactionId",
+        "actionId"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "userscript.action",
+    "version": 1,
+    "permission": "userscripts",
+    "input": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+        },
+        "actionId": {
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        }
+      },
+      "required": [
+        "handle",
+        "actionId"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "tasks.foreground.start",
+    "version": 1,
+    "permission": "tasks",
+    "input": {
+      "type": "object",
+      "properties": {
+        "taskId": {
+          "type": "string",
+          "maxLength": 96,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+        },
+        "input": {
+          "type": "object"
+        },
+        "state": {}
+      },
+      "required": [
+        "taskId",
+        "input",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "tasks.foreground.stop",
+    "version": 1,
+    "permission": "tasks",
+    "input": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "output": {},
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "tasks.foreground.list",
+    "version": 1,
+    "permission": "tasks",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "maxItems": 8
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "device.scan",
+    "version": 1,
+    "permission": "device.scan",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "maxLength": 4000
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "device.location",
+    "version": 1,
+    "permission": "device.location",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "accuracy": {
+          "type": "number"
+        },
+        "timestamp": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude",
+        "accuracy",
+        "timestamp"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "device.photo",
+    "version": 1,
+    "permission": "device.camera",
+    "input": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_.:-]{1,128}$"
+        },
+        "name": {
+          "type": "string",
+          "maxLength": 160
+        },
+        "mime": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        }
+      },
+      "required": [
+        "handle",
+        "name",
+        "mime",
+        "size"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "browser.session.open",
+    "version": 1,
+    "permission": "pages",
+    "input": {
+      "type": "object",
+      "properties": {
+        "serverId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        },
+        "url": {
+          "type": "string",
+          "maxLength": 2048,
+          "pattern": "^https://"
+        }
+      },
+      "required": [
+        "serverId",
+        "url"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "browser.session.status",
+    "version": 1,
+    "permission": "pages",
+    "input": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "browser.session.close",
+    "version": 1,
+    "permission": "pages",
+    "input": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        }
+      },
+      "required": [
+        "handle"
+      ],
+      "additionalProperties": false
+    },
+    "output": {},
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "userscript.configure",
+    "version": 1,
+    "permission": "userscripts",
+    "input": {
+      "type": "object",
+      "properties": {
+        "scriptId": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        },
+        "values": {
+          "type": "object",
+          "maxProperties": 32
+        },
+        "credential": {
+          "type": "object",
+          "properties": {
+            "handle": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_.:-]+$"
+            },
+            "key": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_.:-]+$"
+            },
+            "field": {
+              "type": "string",
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[a-zA-Z0-9_.:-]+$"
+            }
+          },
+          "required": [
+            "handle",
+            "key",
+            "field"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "scriptId"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object"
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "device.location.pick",
+    "version": 2,
+    "permission": "device.location",
+    "input": {
+      "type": "object",
+      "properties": {
+        "initial": {
+          "type": "object",
+          "properties": {
+            "latitude": {
+              "type": "number",
+              "minimum": -90,
+              "maximum": 90
+            },
+            "longitude": {
+              "type": "number",
+              "minimum": -180,
+              "maximum": 180
+            },
+            "address": {
+              "type": "string",
+              "maxLength": 500
+            },
+            "coordinateSystem": {
+              "enum": [
+                "WGS84",
+                "GCJ02",
+                "BD09"
+              ]
+            }
+          },
+          "required": [
+            "latitude",
+            "longitude",
+            "coordinateSystem"
+          ],
+          "additionalProperties": false
+        },
+        "query": {
+          "type": "string",
+          "maxLength": 120
+        }
+      },
+      "required": [],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "latitude": {
+          "type": "number",
+          "minimum": -90,
+          "maximum": 90
+        },
+        "longitude": {
+          "type": "number",
+          "minimum": -180,
+          "maximum": 180
+        },
+        "address": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "coordinateSystem": {
+          "enum": [
+            "WGS84",
+            "GCJ02",
+            "BD09"
+          ]
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude",
+        "coordinateSystem"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "images.match",
+    "version": 1,
+    "permission": "files",
+    "input": {
+      "type": "object",
+      "properties": {
+        "backgroundHandle": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        },
+        "pieceHandle": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        },
+        "expectedY": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 8192
+        }
+      },
+      "required": [
+        "backgroundHandle",
+        "pieceHandle"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        },
+        "confidence": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "ambiguous": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height",
+        "confidence",
+        "ambiguous"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "images.puzzle",
+    "version": 1,
+    "permission": "files",
+    "input": {
+      "type": "object",
+      "properties": {
+        "backgroundHandle": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        },
+        "pieceHandle": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        },
+        "y": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "expiresAt": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "backgroundHandle",
+        "pieceHandle",
+        "expiresAt"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "width": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 8192
+        }
+      },
+      "required": [
+        "x",
+        "width"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": true,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "records.upsert",
+    "version": 1,
+    "permission": "storage",
+    "input": {
+      "type": "object",
+      "properties": {
+        "collection": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        },
+        "items": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[a-zA-Z0-9_.:-]+$"
+              },
+              "value": {}
+            },
+            "required": [
+              "key",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "ifAbsent": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "collection",
+        "items"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "written": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "written"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
+  },
+  {
+    "name": "records.query",
+    "version": 1,
+    "permission": "storage",
+    "input": {
+      "type": "object",
+      "properties": {
+        "collection": {
+          "type": "string",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[a-zA-Z0-9_.:-]+$"
+        },
+        "keys": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "string",
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[a-zA-Z0-9_.:-]+$"
+          }
+        },
+        "cursor": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      },
+      "required": [
+        "collection"
+      ],
+      "additionalProperties": false
+    },
+    "output": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1,
+                "pattern": "^[a-zA-Z0-9_.:-]+$"
+              },
+              "value": {},
+              "at": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              }
+            },
+            "required": [
+              "key",
+              "value",
+              "at"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "nextCursor": {
+          "type": "string",
+          "maxLength": 1024
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "items",
+        "nextCursor",
+        "total"
+      ],
+      "additionalProperties": false
+    },
+    "cancellable": true,
+    "userGesture": false,
+    "limits": {
+      "maxPerFlow": 32
+    },
+    "web": false
   },
   {
     "name": "privacy.status",
@@ -628,7 +1792,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "privacy.revoke",
@@ -645,11 +1810,12 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "academic.session.authorize",
-    "version": 1,
+    "version": 2,
     "permission": "academic.session",
     "input": {
       "type": "object",
@@ -685,7 +1851,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "academic.session.request",
@@ -824,7 +1991,8 @@
     "limits": {
       "maxPerFlow": 32,
       "responseBytes": 5242880
-    }
+    },
+    "web": false
   },
   {
     "name": "academic.session.revoke",
@@ -841,11 +2009,12 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "network.request",
-    "version": 3,
+    "version": 4,
     "permission": "network",
     "input": {
       "type": "object",
@@ -1249,7 +2418,8 @@
     "limits": {
       "maxPerFlow": 32,
       "responseBytes": 5242880
-    }
+    },
+    "web": false
   },
   {
     "name": "storage.get",
@@ -1275,7 +2445,8 @@
     "limits": {
       "maxPerFlow": 32,
       "bytes": 262144
-    }
+    },
+    "web": false
   },
   {
     "name": "storage.set",
@@ -1303,7 +2474,8 @@
     "limits": {
       "maxPerFlow": 32,
       "bytes": 262144
-    }
+    },
+    "web": false
   },
   {
     "name": "storage.remove",
@@ -1328,7 +2500,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "auth.prompt",
@@ -1415,7 +2588,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "credentials.find",
@@ -1440,7 +2614,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "credentials.remove",
@@ -1465,7 +2640,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "session.save",
@@ -1490,7 +2666,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "session.restore",
@@ -1526,7 +2703,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "session.clear",
@@ -1551,7 +2729,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "files.pick",
@@ -1610,7 +2789,8 @@
     "limits": {
       "maxPerFlow": 32,
       "bytes": 16777216
-    }
+    },
+    "web": true
   },
   {
     "name": "files.create",
@@ -1668,7 +2848,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "files.read",
@@ -1726,7 +2907,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "files.write",
@@ -1790,7 +2972,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "files.remove",
@@ -1815,7 +2998,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "files.download",
@@ -2239,7 +3423,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "files.upload",
@@ -2666,7 +3851,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "files.open",
@@ -2691,7 +3877,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "files.share",
@@ -2716,7 +3903,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "device.clipboard.read",
@@ -2745,7 +3933,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "device.clipboard.write",
@@ -2769,7 +3958,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "device.haptic",
@@ -2786,7 +3976,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "tasks.schedule",
@@ -2835,7 +4026,8 @@
     "limits": {
       "maxPerFlow": 32,
       "pending": 16
-    }
+    },
+    "web": false
   },
   {
     "name": "tasks.cancel",
@@ -2860,7 +4052,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "tasks.list",
@@ -2911,7 +4104,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "notifications.post",
@@ -2946,7 +4140,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "navigation.page",
@@ -2974,7 +4169,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "navigation.back",
@@ -2991,7 +4187,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "navigation.url",
@@ -3015,7 +4212,8 @@
     "userGesture": true,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": true
   },
   {
     "name": "runtime.cancel",
@@ -3044,7 +4242,8 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   },
   {
     "name": "data.query",
@@ -3092,6 +4291,7 @@
     "userGesture": false,
     "limits": {
       "maxPerFlow": 32
-    }
+    },
+    "web": false
   }
 ]

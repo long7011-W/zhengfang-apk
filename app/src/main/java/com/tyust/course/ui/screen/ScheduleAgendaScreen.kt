@@ -4,12 +4,13 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.ScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.interaction.DragInteraction
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.PagerDefaults
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
@@ -46,6 +47,9 @@ fun ScheduleScreen(
     isNextSemester: Boolean = false,
     onToggleSemester: () -> Unit = {},
     errorMessage: String = "",
+    loadIssue: ScheduleLoadIssue? = null,
+    hasCachedSchedule: Boolean = courses.isNotEmpty(),
+    onDismissIssue: () -> Unit = {},
     onRetry: () -> Unit = {},
     isRefreshing: Boolean = false,
     onRefresh: () -> Unit = {},
@@ -63,8 +67,11 @@ fun ScheduleScreen(
     onCourseLongClick: (ScheduleCourseUi) -> Unit = {},
     onAddClick: () -> Unit = {},
     onWidgetClick: () -> Unit = {},
+    adjustments: ScheduleAdjustments = ScheduleAdjustments(),
+    backgroundRefreshing: Boolean = false,
     now: Long? = null
 ) {
+    val issue = loadIssue ?: errorMessage.takeIf { it.isNotBlank() }?.let { ScheduleLoadIssue(ScheduleLoadIssue.Kind.Other, it) }
     val scope = rememberCoroutineScope()
     val reduced = rememberGlassAccessibilityMode().reduceMotion
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -74,8 +81,9 @@ fun ScheduleScreen(
         }
     }
     val clock = now ?: minuteClock
-    val base = remember(firstWeekDate, periodTimes) { ScheduleTimeBase(firstWeekDate.orEmpty(),
-        periodTimes.associate { it.period to it.startTime }, periodTimes.associate { it.period to it.endTime }) }
+    val base = remember(firstWeekDate, periodTimes, adjustments) { ScheduleTimeBase(firstWeekDate.orEmpty(),
+        periodTimes.associate { it.period to it.startTime }, periodTimes.associate { it.period to it.endTime }, adjustments) }
+    val effectiveCourses = remember(courses, base) { resolvedScheduleUi(courses, base) }
     val agenda = remember(courses, base, clock) { ScheduleAgenda.calculate(courses.map { it.record() }, base, clock) }
     val actualWeek = ScheduleDates.weekIndexAt(firstWeekDate, clock) ?: 1
     val actualDay = ScheduleDates.dayAt(clock)
@@ -137,11 +145,11 @@ fun ScheduleScreen(
         }
     }) { padding ->
         when {
-            isLoading && courses.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+            isLoading && !hasCachedSchedule -> Box(Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
                 GlassLoadingState(text = "正在同步课表…")
             }
-            errorMessage.isNotBlank() && courses.isEmpty() -> Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
-                ScheduleNotice(errorMessage, "重新同步", onRetry)
+            issue != null && !hasCachedSchedule -> Box(Modifier.fillMaxSize().padding(padding).padding(24.dp), contentAlignment = Alignment.Center) {
+                ScheduleNotice(issue.message, issue.actionLabel, onRetry)
             }
             else -> GlassPullRefreshBox(isRefreshing = isRefreshing, onRefresh = onRefresh,
                 modifier = Modifier.fillMaxSize(), indicatorTopPadding = topInset + 10.dp) {
@@ -158,13 +166,38 @@ fun ScheduleScreen(
                         }, label = "schedule-view") { mode ->
                         SchedulePages(mode, mode == dayView, currentWeek, selectedDay,
                             "$weekRequestKey|$dateRequest", firstWeekDate, actualWeek, isNextSemester,
-                            courses, periodTimes, periodCount, displayPreferences, agenda, clock, topInset,
+                            effectiveCourses, periodTimes, periodCount, displayPreferences, agenda, clock, topInset,
                             pageScrolls, restoredScrolls, if (mode) dayOffset else weekOffset, reduced,
                             onWeekChange, onDayChange, onCourseClick, onCourseLongClick, onSettingsClick,
                             onShown = { week, day, scroll -> shownWeek = week; shownDay = day; activeScroll = scroll },
                             onScroll = { if (mode) dayOffset = it else weekOffset = it })
+                }
+                if (backgroundRefreshing && (issue == null || !issue.visibleWithCache())) {
+                    Surface(Modifier.align(Alignment.TopEnd).padding(top = topInset + 8.dp, end = 16.dp)
+                        .testTag("schedule-background-refresh"), shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.94f)) {
+                        Row(Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                            PageLoadingIcon("app.schedule", Modifier.size(16.dp))
+                            Text("正在刷新", style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
+                if (issue != null && issue.visibleWithCache()) Box(Modifier.fillMaxSize()
+                    .padding(top = topInset, bottom = LocalAppOverlayBottomInset.current + 8.dp)
+                    .padding(horizontal = 16.dp, vertical = 8.dp)) {
+                Surface(Modifier.align(Alignment.TopCenter).heightIn(max = 180.dp)
+                    .testTag("schedule-refresh-notice"), shape = MaterialTheme.shapes.medium) {
+                    Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(12.dp)) {
+                        Text("已保留本地课表 · ${issue.message}", style = MaterialTheme.typography.bodySmall)
+                        Row {
+                            TextButton(onClick = onRetry, enabled = !isLoading) { Text(issue.actionLabel) }
+                            TextButton(onClick = onDismissIssue) { Text("关闭") }
+                        }
+                    }
+                }
+                }
+            }
             }
         }
     }
@@ -256,8 +289,8 @@ private fun SchedulePages(
             val current = agenda.current.map { it.course.id }.toSet()
             val next = agenda.next?.takeIf { next -> agenda.today.any { it.startsAt == next.startsAt && it.course.id == next.course.id } }?.course?.id
             courses.map { it.copy(hasConflict = it.id in conflicts,
-                isCurrent = !nextSemester && week == actualWeek && it.id in current,
-                isNext = !nextSemester && week == actualWeek && it.id == next) }
+                isCurrent = !nextSemester && week == actualWeek && it.id in current && (it.occurrenceDate == null || it.occurrenceDate == ScheduleTimeBase.dateFromMillis(now)),
+                isNext = !nextSemester && week == actualWeek && it.id == next && (it.occurrenceDate == null || it.occurrenceDate == ScheduleTimeBase.dateFromMillis(now))) }
         }
         if (dayView) ScheduleDayList(displayed, week, day, firstWeekDate, times,
             preferences.compact, scroll, topInset, onCourse, onCourseLongClick = onLongClick,
