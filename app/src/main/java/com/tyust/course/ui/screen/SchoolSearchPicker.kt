@@ -84,11 +84,8 @@ private fun SchoolSearchDialog(schools: List<SchoolConfig>, onDismiss: () -> Uni
         check(AcademicProviderRegistry.matches(pkg, target)) { "适配不支持已保存的自定义地址，请保留原配置或手动添加学校" }
         // No suspension between the final session check and these small local writes.
         if (!gate.current(token)) return
-        if (existing == null) manager.addCustomSchool(target)
-        AcademicProviderRegistry.setEnabled(pkg.manifest.id, true)
-        AcademicProviderRegistry.setSchoolEnabled(pkg.manifest.id, target, true)
-        AcademicProviderRegistry.choose(target, pkg.manifest.id)
-        gate.finish(token); busy = false; onSelected(target); onAdded()
+        val bound = AcademicProviderRegistry.bindSchool(pkg, target)
+        gate.finish(token); busy = false; onSelected(bound); onAdded()
     }
     fun activate(item: PendingSchoolInstall, approved: Boolean) {
         job = scope.launch {

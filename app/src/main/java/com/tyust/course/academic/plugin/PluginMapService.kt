@@ -7,6 +7,7 @@ internal object PluginMapService {
     const val STYLE = """{"version":8,"sources":{"osm":{"type":"raster","tiles":["https://plugins.hidisiwa.xyz/api/maps/v1/tiles/{z}/{x}/{y}.png"],"tileSize":256,"maxzoom":19,"attribution":"© OpenStreetMap contributors"}},"layers":[{"id":"background","type":"background","paint":{"background-color":"#e8ecef"}},{"id":"osm","type":"raster","source":"osm"}]}"""
 
     fun searchFailure(code: Int) = when (code) {
+        401, 409 -> "搜索授权未通过，请检查设备时间、更新 App 后重试"
         429, 503 -> "搜索服务繁忙，请稍后重试"
         400 -> "请填写 2～120 个字符的学校或地点名称"
         else -> "地址搜索暂不可用，请重试或使用当前位置"

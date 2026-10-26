@@ -19,6 +19,8 @@ def code = versionProps['VERSION_CODE'].toInteger()
 def name = versionProps['VERSION_NAME']
 // Optional phone-only preview; regular builds retain their existing ABI coverage.
 def compactPreview = providers.gradleProperty('compactPreview').map { it.toBoolean() }.getOrElse(false)
+// MuMu is x86_64. Run Gecko natively during device checks rather than via ARM translation.
+def emulatorPreview = providers.gradleProperty('emulatorPreview').map { it.toBoolean() }.getOrElse(false)
 def localSecrets = new Properties()
 def localPropertiesFile = rootProject.file('local.properties')
 
@@ -51,6 +53,9 @@ def isReleaseTask = gradle.startParameter.taskNames.any { taskName ->
     def lower = taskName.toLowerCase()
     (lower.contains('release') && (lower.contains('assemble') || lower.contains('bundle')))
 }
+if (emulatorPreview && isReleaseTask) {
+    throw new GradleException('emulatorPreview is only for local device testing, not release builds')
+}
 
 println "📦 当前版本: versionCode=$code, versionName=$name (isRelease=$isReleaseTask)"
 
@@ -65,6 +70,7 @@ def hasReleaseSigning = releaseKeystoreFile != null &&
     releaseKeyAlias != null &&
     releaseKeyPassword != null
 def feedbackSigningSecret = readSecret("FEEDBACK_SIGNING_SECRET") ?: ""
+def mapConfigClientSecret = readSecret("MAP_CONFIG_CLIENT_SECRET") ?: ""
 
 if (releaseKeystoreFile != null && isReleaseTask && !hasReleaseSigning) {
     throw new GradleException("Release signing credentials are missing. Configure RELEASE_STORE_PASSWORD, RELEASE_KEY_ALIAS, and RELEASE_KEY_PASSWORD via environment variables or local.properties.")
@@ -81,8 +87,12 @@ android {
         targetSdk 34
         versionCode code
         versionName name
-        if (!isReleaseTask) { ndk { abiFilters 'arm64-v8a', 'armeabi-v7a' } }
+        if (!isReleaseTask) {
+            ndk { abiFilters.addAll(emulatorPreview ? ['x86_64'] : ['arm64-v8a', 'armeabi-v7a']) }
+        }
         buildConfigField "String", "FEEDBACK_SIGNING_SECRET", quoteForBuildConfig(feedbackSigningSecret)
+        buildConfigField "String", "MAP_CONFIG_CLIENT_SECRET", quoteForBuildConfig(mapConfigClientSecret)
+        buildConfigField "String", "AMAP_ANDROID_SDK_KEY", quoteForBuildConfig(isReleaseTask ? "" : (readSecret("AMAP_ANDROID_SDK_KEY") ?: ""))
         buildConfigField "boolean", "UI_PREVIEW", "false"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -128,7 +138,7 @@ android {
             signingConfig signingConfigs.debug
             buildConfigField "boolean", "UI_PREVIEW", "true"
             if (compactPreview) {
-                ndk { abiFilters 'arm64-v8a' }
+                ndk { abiFilters emulatorPreview ? 'x86_64' : 'arm64-v8a' }
                 minifyEnabled true
                 proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             }
@@ -150,7 +160,8 @@ android {
         // Android extracts the device's libraries when installing the APK.
         jniLibs.useLegacyPackaging = true
         // AGP's universal split also includes dependency ABIs outside splits.include.
-        jniLibs.excludes += ['**/x86/**', '**/x86_64/**']
+        jniLibs.excludes += ['**/x86/**']
+        if (!emulatorPreview) jniLibs.excludes += ['**/x86_64/**']
     }
     
     compileOptions {
@@ -178,6 +189,9 @@ android {
         unitTests.all {
             maxHeapSize = '2g'
             systemProperty 'robolectric.dependency.repo.url', 'https://repo.maven.apache.org/maven2'
+            // 单测固定按 UTC 跑：CI（ubuntu-latest）本来就是 UTC，本机（CST）也跟着对齐，
+            // 否则依赖默认时区的用例会在本机通过、在 CI 失败。
+            systemProperty 'user.timezone', 'UTC'
         }
     }
 }
@@ -191,6 +205,9 @@ dependencies {
     implementation 'org.mozilla.geckoview:geckoview:157.0.20261005135250'
     // The default 13.x artifact is Vulkan-only; MuMu Android 12 cannot create its surface.
     implementation 'org.maplibre.gl:android-sdk-opengl:13.6.1'
+    implementation 'com.amap.api:3dmap-location-search:11.3.100_loc11.3.000_sea9.8.1'
+    // AMap's JAR references FastMath but its published POM omits this dependency.
+    implementation 'net.jafama:jafama:2.3.2'
     implementation 'androidx.activity:activity-compose:1.10.1'
     implementation 'androidx.core:core-splashscreen:1.2.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.9.1'
@@ -260,6 +277,8 @@ dependencies {
     // Markdown Rendering for Compose
     implementation "com.halilibo.compose-richtext:richtext-commonmark:0.17.0"
     implementation "com.halilibo.compose-richtext:richtext-ui-material3:0.17.0"
+    // Match the renderer's parser when inspecting Markdown before displaying it.
+    implementation 'org.commonmark:commonmark:0.21.0'
 
     // Liquid Glass (Kyant Backdrop) — iOS 26 风格折射 / 色散
     implementation 'io.github.kyant0:backdrop:2.0.0'
@@ -278,6 +297,7 @@ dependencies {
     testImplementation 'junit:junit:4.13.2'
     testImplementation 'org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0'
     testImplementation 'com.squareup.okhttp3:mockwebserver:4.12.0'
+    testImplementation 'com.squareup.okhttp3:okhttp-tls:4.12.0'
     testImplementation 'org.robolectric:robolectric:4.17'
     testImplementation composeBom
     testImplementation 'androidx.compose.ui:ui-test-junit4'

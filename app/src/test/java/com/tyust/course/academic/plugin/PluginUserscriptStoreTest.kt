@@ -42,11 +42,45 @@ class PluginUserscriptStoreTest {
     private fun store(syntax: suspend (String) -> Unit = {}) = PluginUserscriptStore(app,
         PluginUserscriptPolicy(JSONObject("""{"id":"original","serverId":"site","sourcePrefix":"https://updates.test/scripts/1/",
             "updateUrl":"https://updates.test/scripts/1/original.meta.js","downloadUrl":"https://updates.test/scripts/1/original.user.js",
-            "matches":[{"host":"course.test","pathPrefix":"/course"}],"connect":["course.test"],
+            "matches":[{"host":"course.test","pathPrefix":"/course"}],"connect":["course.test"],"sensitiveKeys":["shenchanranToken"],
             "adapter":{"settings":[{"key":"video","selector":"#video","type":"boolean"}]}}"""),
             PluginManifest(JSONObject("""{"id":"test.script","version":"1.0.0","apiVersion":3,"kind":"native","network":[{"origin":"https://course.test","pathPrefix":"/","methods":["GET"],"purposes":["query"]}]}"""))),
         namespace, downloadOverride = { url -> if (offline) throw IOException("synthetic offline") else source(if (url.endsWith(".meta.js")) metadataVersion ?: version else version) },
         syntaxOverride = syntax, keyProvider = { SecretKeySpec(ByteArray(32) { 3 }, "AES") }, active = { active })
+
+    @Test fun configurationUsesTheCallingPagesTemporaryCredentialWithoutExposingIt() {
+        val caller = NativePluginVault(app, namespace)
+        val secret = "synthetic-answer-key"
+        val handle = caller.saveCredential("answer", JSONObject().put("token", secret), remember = false)
+        val reference = JSONObject().put("handle", handle).put("field", "token").put("key", "shenchanranToken")
+        assertNull(NativePluginVault(app, namespace).get("credential:$handle"))
+        val store = store()
+        store.configure(JSONObject().put("credential", reference), caller)
+        assertEquals(secret, store.settings().getString("shenchanranToken"))
+        assertEquals(secret, store().settings().getString("shenchanranToken"))
+        assertTrue(store.publicStatus().getBoolean("questionBankConfigured"))
+        assertFalse(store.publicStatus().toString().contains(secret))
+        assertEquals(secret, caller.credentialField(reference)) // Also used by native browser prompts.
+    }
+
+    @Test fun missingForeignOrUndeclaredCredentialsCannotPartiallyChangeSettings() {
+        val caller = NativePluginVault(app, namespace)
+        val handle = caller.saveCredential("answer", JSONObject().put("token", "synthetic"), remember = false)
+        val reference = JSONObject().put("handle", handle).put("field", "token").put("key", "shenchanranToken")
+        val input = JSONObject().put("credential", reference).put("values", JSONObject().put("video", true))
+        val store = store()
+        for (other in listOf(null, NativePluginVault(app, "another-account"))) {
+            assertThrows(PluginException::class.java) { store.configure(input, other) }
+        }
+        reference.put("field", "missing")
+        assertThrows(PluginException::class.java) { store.configure(input, caller) }
+        reference.put("field", "token").put("key", "undeclared")
+        assertThrows(PluginException::class.java) { store.configure(input, caller) }
+        assertFalse(store.settings().optBoolean("video"))
+        assertFalse(store.publicStatus().getBoolean("questionBankConfigured"))
+        caller.remove("credential:$handle")
+        assertThrows(PluginException::class.java) { caller.credentialField(reference) }
+    }
 
     @Test fun updatesStayPendingAndRollbackRestoresSettingsWithoutImmediatelyReinstallingTheSameVersion() = runBlocking {
         val store = store()

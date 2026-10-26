@@ -20,6 +20,7 @@ class CourseApplication : Application() {
         }
         if (processName == packageName) {
             mainProcess = true
+            com.tyust.course.academic.plugin.PluginMapRequestAuth.initialize(this)
             com.tyust.course.announcement.AnnouncementManager.initialize(this)
             com.tyust.course.diagnostics.AppDiagnostics.install(this)
             com.tyust.course.academic.plugin.AcademicProviderRegistry.initialize(this)
@@ -29,6 +30,7 @@ class CourseApplication : Application() {
             AppearanceSettingsManager.initialize(this)
             AppThemeCoordinator.initialize(this)
             com.tyust.course.schedule.ScheduleReminderScheduler.get(this).start(this)
+            com.tyust.course.schedule.ClassQuietManager.get(this).start(this)
             com.tyust.course.schedule.ScheduleWidgetUpdater.start(this)
             com.tyust.course.usage.UsageStatsManager.initialize(this)
             com.tyust.course.survey.SurveyVisitTracker.initialize(this)

@@ -211,16 +211,18 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
                     supplied.optString("Content-Type", "application/x-www-form-urlencoded; charset=$charsetName").toMediaType())
                 builder.method(method, body)
             } else builder.method(method, null)
+            PluginRequestPacing.await(operation, url)
             if (purpose == "mutation") {
                 if (approvedSharedWrite && sharedRequest != null) operation.markAuthorizedSharedWrite()
                 else operation.markMutation()
             }
-            val call = PluginHttpClients.client(operation, url, requestCookies).newCall(builder.build())
+            val call = PluginHttpClients.call(operation, url, requestCookies, PluginMapRequestAuth.authorize(builder).build())
             operation.register(call)
             dataGuard?.track(operation)
             try {
                 call.execute().use { response ->
                     operation.requireActive()
+                    authScope?.responseReceived(url)
                     if (sessionToken != null && response.code in setOf(401, 403)) {
                         synchronized(tokenSession) {
                             operation.requireActive()
@@ -232,7 +234,7 @@ class PluginHost(private val operation: PluginOperation, private val storageRoot
                         .put("method", method).put("purpose", purpose).put("status", response.code)
                     if (response.code in 300..399) {
                         if (purpose == "mutation") throw PluginException(PluginErrorCode.RESULT_UNKNOWN, "写入请求发生跳转，请先核实结果")
-                        if (++redirected > 5) invalid("跳转次数超过上限")
+                        if (++redirected > com.tyust.course.academic.AcademicRedirects.MAX_REDIRECTS) invalid("跳转次数超过上限")
                         if (method !in setOf("GET", "HEAD") && response.code in setOf(307, 308)) invalid("不能自动重放写入请求跳转")
                         val resolved = url.resolve(response.header("Location").orEmpty()) ?: invalid("无效跳转")
                         val next = PluginRedirects.upgradeToHttps(url, resolved, upgradeHttpRedirects)

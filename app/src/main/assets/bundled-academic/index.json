@@ -41,7 +41,13 @@
       "id": "org.zf.protocol.eams",
       "type": "eams",
       "asset": "eams.eduplugin",
-      "sha256": "136dd40b36c0d95f06cc6d5e64896169ace2a0b58207ead86938513d83a3a8e9"
+      "sha256": "fdf57340fcd749eea616a0f57bbbd71f0075a39a7cc0ca428fd254a7b518345f"
+    },
+    {
+      "id": "org.zf.protocol.kingo",
+      "type": "kingo",
+      "asset": "kingo.eduplugin",
+      "sha256": "ce934a7e5dfc5faac2109eb3b1bba84ad70e2196ec975e1a3b731017e01e234a"
     },
     {
       "id": "org.zf.protocol.chaoxing-academic",

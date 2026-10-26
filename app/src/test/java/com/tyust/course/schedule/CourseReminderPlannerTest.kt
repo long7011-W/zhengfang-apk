@@ -30,7 +30,9 @@ class CourseReminderPlannerTest {
         assertEquals(ReminderAvailability.NeedsPermission, status(p = ReminderPermissions(false, true)))
         assertEquals(ReminderAvailability.NeedsPermission, status(p = ReminderPermissions(true, false)))
         assertEquals(ReminderAvailability.NeedsTime, status(b = null))
-        assertEquals(ReminderAvailability.NeedsTime, status(b = base.copy(firstWeekDate = "2026-09-08")))
+        assertEquals(ReminderAvailability.NeedsTime, status(b = base.copy(firstWeekDate = "not-a-date")))
+        // A teaching week may start on any weekday now, so a Tuesday anchor still schedules its Monday course one week later.
+        assertEquals(ReminderAvailability.Scheduled, status(b = base.copy(firstWeekDate = "2026-09-08")))
         assertEquals(ReminderAvailability.InvalidWeeks, status(reminder.copy(course = course.copy(weeks = "待定"))))
         assertEquals(ReminderAvailability.InactiveAccount, status(account = "other"))
     }
@@ -80,10 +82,38 @@ class CourseReminderPlannerTest {
         assertFalse(isCurrentReminderOccurrence(original, reminder, base.copy(periodStarts = mapOf(1 to "09:00")), allowed, "account1", zone))
         run(time(7, 7, 50), base.copy(periodStarts = mapOf(1 to "09:00")))
         assertEquals(time(7, 8, 45), alarms.plans.values.single().triggerAt)
-        run(time(7, 9, 0))
+        run(time(7, 9, 6))
         assertEquals(time(14, 7, 45), alarms.plans.values.single().triggerAt)
-        run(time(7, 9, 1), list = listOf(reminder.copy(enabled = false, revision = 2)))
+        run(time(7, 9, 7), list = listOf(reminder.copy(enabled = false, revision = 2)))
         assertTrue(alarms.plans.isEmpty())
+    }
+
+    @Test fun zeroLeadAndBrieflyLateAlarmsSurviveColdStartButOldHistoryDoesNot() {
+        val alarms = FakeAlarms()
+        val zero = reminder.copy(leadMinutes = 0)
+        fun run(now: Long) = reconcileCourseReminders(listOf(zero), "account1", { base }, allowed, now, alarms, zone)
+        run(time(7, 7, 50))
+        val due = alarms.plans.values.single()
+        assertTrue(due.canDeliverAt(time(7, 8, 0)))
+        assertTrue(due.canDeliverAt(time(7, 8, 2)))
+        assertFalse(due.canDeliverAt(time(7, 7, 59)))
+        assertFalse(due.canDeliverAt(time(7, 8, 5)))
+        run(time(7, 8, 0)); run(time(7, 8, 2))
+        assertEquals(due, alarms.plans.values.single())
+        run(time(7, 8, 6))
+        assertEquals(time(14, 8, 0), alarms.plans.values.single().triggerAt)
+    }
+
+    @Test fun recoveryReassertsPersistedPlansWithoutReplacingTheDueTenMinuteReminder() {
+        val alarms = FakeAlarms()
+        val ten = reminder.copy(leadMinutes = 10)
+        reconcileCourseReminders(listOf(ten), "account1", { base }, allowed, time(7, 7, 0), alarms, zone)
+        val due = alarms.plans.values.single()
+        assertEquals(time(7, 7, 50), due.triggerAt)
+        // An existing PendingIntent is not proof that its alarm is still registered with the OS.
+        reconcileCourseReminders(listOf(ten), "account1", { base }, allowed, time(7, 7, 51), alarms, zone, restoreAlarms = true)
+        assertEquals(2, alarms.writes)
+        assertEquals(due, alarms.plans.values.single())
     }
 
     private class FakeAlarms : ReminderAlarmPort {

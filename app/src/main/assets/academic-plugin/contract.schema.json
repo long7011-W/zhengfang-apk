@@ -3521,6 +3521,9 @@
             "$ref": "#/$defs/UiEffect"
           },
           "maxItems": 8
+        },
+        "done": {
+          "type": "boolean"
         }
       },
       "required": [

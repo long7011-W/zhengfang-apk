@@ -35,6 +35,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.runtime.Immutable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.tyust.course.ui.system.InsetGroupedRow
@@ -113,7 +115,23 @@ fun NativePluginNode(data: NativeNodeData, files: NativePluginFiles?, modifier: 
                 }
                 val sized = if (!node.has("height") && node.optDouble("weight", 0.0) > 0) m.fillMaxHeight()
                     else m.height(node.optInt("height", if (type == "scroll") 520 else 420).dp)
-                LazyColumn(sized, state = listState, verticalArrangement = Arrangement.spacedBy(gap)) {
+                // Keep the indicator visible while idle so bounded text areas advertise scrolling.
+                val scrollModifier = if (type == "scroll") Modifier.drawWithContent {
+                    drawContent()
+                    val indicator = listState.scrollIndicatorState ?: return@drawWithContent
+                    val content = indicator.contentSize.toFloat()
+                    val viewport = indicator.viewportSize.toFloat()
+                    if (content > viewport && viewport > 0f) {
+                        val width = 3.dp.toPx()
+                        val thumb = (size.height * viewport / content).coerceIn(24.dp.toPx().coerceAtMost(size.height), size.height)
+                        val top = (size.height - thumb) * (indicator.scrollOffset / (content - viewport)).coerceIn(0f, 1f)
+                        val x = size.width - width
+                        drawRoundRect(colors.onSurface.copy(alpha = 0.1f), Offset(x, 0f), Size(width, size.height), CornerRadius(width))
+                        drawRoundRect(colors.onSurfaceVariant.copy(alpha = 0.6f), Offset(x, top), Size(width, thumb), CornerRadius(width))
+                    }
+                } else Modifier
+                LazyColumn(sized.then(scrollModifier), state = listState, verticalArrangement = Arrangement.spacedBy(gap),
+                    contentPadding = PaddingValues(end = if (type == "scroll") 12.dp else 0.dp)) {
                     items(children, key = { it.json.getString("id") }, contentType = { it.json.getString("type") }) { child -> NativePluginNode(child, files, Modifier.fillMaxWidth(), active, emit) }
                 }
             }

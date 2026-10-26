@@ -147,6 +147,8 @@ import kotlinx.coroutines.flow.collectLatest
 import androidx.lifecycle.repeatOnLifecycle
 import com.tyust.course.schedule.ScheduleAgenda
 import com.tyust.course.schedule.ScheduleDisplayPreferences
+import com.tyust.course.schedule.ScheduleStudyBlock
+import com.tyust.course.schedule.ScheduleStudyKind
 import com.tyust.course.schedule.ScheduleTimeBase
 import com.tyust.course.schedule.ScheduleViewPosition
 
@@ -224,16 +226,23 @@ fun ScheduleGrid(
      */
     topInset: Dp = 0.dp,
     showWeekend: Boolean = true,
+    /** ISO days in display order; the first entry is the leftmost timetable column. */
+    dayOrder: List<Int> = (1..7).toList(),
     compact: Boolean = false,
     beforeGrid: @Composable () -> Unit = {},
-    onCourseLongClick: (ScheduleCourseUi) -> Unit = {}
+    onCourseLongClick: (ScheduleCourseUi) -> Unit = {},
+    studyBlocks: List<ScheduleStudyBlock> = emptyList(),
+    onStudyClick: (ScheduleStudyKind) -> Unit = {}
 ) {
     BoxWithConstraints(Modifier.fillMaxSize()) {
     val weeklyCourses = remember(courses, currentWeek) {
         courses.filter { isInWeek(it.weeks, currentWeek) }
     }
-    val days = if (showWeekend) 7 else 5
-    val visibleCourses = remember(weeklyCourses, days) { weeklyCourses.filter { it.day in 1..days } }
+    val columns = remember(dayOrder, showWeekend) {
+        if (showWeekend) dayOrder else dayOrder.filter { it != 6 && it != 7 }
+    }
+    val days = columns.size
+    val visibleCourses = remember(weeklyCourses, columns) { weeklyCourses.filter { it.day in columns } }
     val timeColumnWidth = scheduleTimeColumnWidth()
     val gridPadding = scheduleGridPadding()
     val density = LocalDensity.current
@@ -254,6 +263,20 @@ fun ScheduleGrid(
     val gridTint = MaterialTheme.colorScheme.surface.copy(alpha =
         if (darkGrid || com.tyust.course.manager.AppearanceSettingsManager.mode != com.tyust.course.manager.WallpaperMode.Preset) 0.86f else 0.18f)
     val timeColumnTint = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = if (darkGrid) 0.4f else 0.28f)
+    // 早/晚自习各占一整行：早在课表之上、晚在课表之下，固定行高；每天单独判一次冲突。
+    val studyRows = remember(visibleCourses, courses, periodTimes, columns, dayOrder, currentWeek, studyBlocks) {
+        ScheduleStudyKind.entries.mapNotNull { kind ->
+            val block = studyBlocks.firstOrNull { it.kind == kind } ?: return@mapNotNull null
+            if (!block.enabled) return@mapNotNull null
+            Triple(kind, block, columns.associateWith { day ->
+                // 跨零点的自习看真实次日的课：判定用完整 7 天顺序，隐藏周末不影响结果，
+                // 一周最后一天借下一周（课表按周重复）。
+                studySlotsFor(day, studyBlocks, visibleCourses, periodTimes,
+                    nextDayStudySpans(day, currentWeek, dayOrder, courses, periodTimes))
+                    .firstOrNull { it.kind == kind }
+            })
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -281,6 +304,11 @@ fun ScheduleGrid(
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         beforeGrid()
+        // 早自习压在最上面。
+        studyRows.filter { it.first == ScheduleStudyKind.Morning }.forEach { (kind, block, slots) ->
+            ScheduleStudyWeekRow(kind, block.name, block.start, columns, columnWidth, timeColumnWidth,
+                gridTint, timeColumnTint, slots) { onStudyClick(kind) }
+        }
         // 去卡片化：轻玻璃衬底压到很低，让壁纸渐变与网格线透上来。
         // 这个 alpha 是"顶栏芯片能不能看出折射"的直接开关——衬底一厚，
         // 白芯片压在白板上，折射再准也是白压白。
@@ -377,6 +405,7 @@ fun ScheduleGrid(
                         periodCount = periodCount,
                         periodHeight = periodHeight,
                         dayCount = days,
+                        dayOrder = columns,
                         periodTimes = periodTimes,
                         onCourseClick = onCourseClick,
                         onCourseLongClick = onCourseLongClick
@@ -396,6 +425,12 @@ fun ScheduleGrid(
                     }
                 }
             }
+        }
+
+        // 晚自习掉在最下面。
+        studyRows.filter { it.first == ScheduleStudyKind.Evening }.forEach { (kind, block, slots) ->
+            ScheduleStudyWeekRow(kind, block.name, block.start, columns, columnWidth, timeColumnWidth,
+                gridTint, timeColumnTint, slots) { onStudyClick(kind) }
         }
 
             Row(
@@ -524,11 +559,13 @@ fun TimetableLayout(
     periodHeight: Dp = SchedulePeriodHeight,
     modifier: Modifier = Modifier,
     dayCount: Int = 7,
+    /** ISO days in display order; column 0 is the first day of the teaching week. */
+    dayOrder: List<Int> = (1..7).toList(),
     periodTimes: List<PeriodTimeUi> = emptyList(),
     onCourseClick: (ScheduleCourseUi) -> Unit,
     onCourseLongClick: (ScheduleCourseUi) -> Unit = {}
 ) {
-    val entries = remember(courses, dayCount) { timetableEntries(courses.filter { it.day in 1..dayCount }) }
+    val entries = remember(courses, dayOrder) { timetableEntries(courses.filter { it.day in dayOrder }) }
     var selectedGroup by remember { mutableStateOf<List<ScheduleCourseUi>?>(null) }
     selectedGroup?.let { group ->
         com.tyust.course.ui.system.SystemDialog(onDismissRequest = { selectedGroup = null }, title = { Text("重叠课程") }) {
@@ -579,7 +616,7 @@ fun TimetableLayout(
         layout(width, (periodCount * pxPerPeriod).roundToInt()) {
             placeables.forEachIndexed { index, placeable ->
                 val course = entries[index].display
-                val dayIndex = (course.day - 1).coerceIn(0, dayCount - 1)
+                val dayIndex = dayOrder.indexOf(course.day).coerceIn(0, dayCount - 1)
                 val startPeriodIndex = (course.startPeriod - 1).coerceIn(0, periodCount - 1)
 
                 val x = (dayIndex * columnWidth).roundToInt() + cardInset

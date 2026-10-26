@@ -1024,7 +1024,7 @@
   },
   {
     "name": "tasks.foreground.start",
-    "version": 1,
+    "version": 2,
     "permission": "tasks",
     "input": {
       "type": "object",

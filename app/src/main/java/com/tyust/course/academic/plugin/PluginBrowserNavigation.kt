@@ -3,6 +3,10 @@ package com.tyust.course.academic.plugin
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 internal object PluginBrowserNavigation {
+    /** A running userscript builds question documents in srcdoc; it is never a top-level grant. */
+    fun allowsLocalSubframe(value: String, runningScript: Boolean): Boolean =
+        value == "about:blank" || runningScript && value == "about:srcdoc"
+
     /** Old scripts sometimes downgrade a failed page probe. Never send the account over HTTP. */
     fun httpsEquivalent(value: String, permits: (String) -> Boolean): String? {
         val url = value.toHttpUrlOrNull() ?: return null

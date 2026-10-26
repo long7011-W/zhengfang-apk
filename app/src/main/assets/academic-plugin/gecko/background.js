@@ -105,7 +105,7 @@ async function command(action, input) {
     if (!current || current.handle !== input.handle) throw Error('Script handle is stale');
     if (input.expiresAt && input.expiresAt <= Date.now()) throw failure('TIMEOUT', '操作已过期，请重新确认当前提示');
     const isPrompt = action === 'script.interact';
-    const target = [...documents.values()].filter(d => isPrompt ? d.interaction?.id === input.interactionId : d.actions?.some(a=>a.id===input.actionId)).sort((a,b)=>a.frameId-b.frameId)[0];
+    const target = [...documents.values()].filter(d => (!input.documentId || d.key === input.documentId) && (isPrompt ? d.interaction?.id === input.interactionId : d.actions?.some(a=>a.id===input.actionId))).sort((a,b)=>a.frameId-b.frameId)[0];
     if (!target) throw failure('PAGE_CHANGED', '当前操作已失效，请刷新任务状态');
     const reply = await notify(target.tabId,target.frameId,{kind:isPrompt?'interact':'action',document:target.document,handle:current.handle,interactionId:input.interactionId,actionId:input.actionId,id:input.id,expiresAt:input.expiresAt});
     if (!reply?.accepted) throw failure('PAGE_CHANGED', '提示或任务状态已变化，未重复执行');
@@ -141,6 +141,10 @@ async function fromDocument(message, sender) {
   } else if (!documents.has(key)) throw Error('Script document has navigated');
   if (message.kind === 'closed') documents.delete(key);
   else if (message.kind === 'status') Object.assign(documents.get(key), {available:!!message.available, stage:message.stage,interaction:message.interaction,actions:message.actions});
+  // Native persistence uses JSON, while extension messages preserve undefined.
+  // Register exactly the persisted snapshot: nested undefined otherwise makes
+  // Gecko reject scriptMetadata after the encrypted write has already succeeded.
+  if (message.kind === 'storage') message = {...message, value:JSON.parse(JSON.stringify(message.value))};
   const handle = current.handle;
   const result = await browser.runtime.sendNativeMessage('zfBrowser', {...message, href:sender.url, documentId:key});
   if (!current || current.handle !== handle) throw Error('Script has stopped');

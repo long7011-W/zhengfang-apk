@@ -107,7 +107,7 @@ class AcademicHttpTransport(
                         if (it.code == 307 || it.code == 308) throw AcademicException(AcademicStatus.PAGE_CHANGED, "POST redirect requires a new login")
                         currentMethod = "GET"
                     }
-                    if (++redirects > 5) throw AcademicException(AcademicStatus.PAGE_CHANGED, "Too many redirects")
+                    if (++redirects > AcademicRedirects.MAX_REDIRECTS) throw AcademicException(AcademicStatus.PAGE_CHANGED, "Too many redirects")
                     val resolved = parsed.resolve(location)
                         ?: throw AcademicException(AcademicStatus.UNTRUSTED_URL, "Invalid redirect")
                     val next = AcademicRedirects.preferVerifiedHttps(parsed, resolved)

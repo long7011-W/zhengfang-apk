@@ -9,9 +9,45 @@ import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.*
 import org.junit.Test
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
 
 class AcademicRedirectsTest {
     private val login = "https://xk.huel.edu.cn/jwglxt/xtgl/login_slogin.html".toHttpUrl()
+
+    @Test fun sixHopLoginKeepsCookiesAndNeverReplaysThePostBody() = runBlocking {
+        MockWebServer().use { server ->
+            repeat(6) { hop -> server.enqueue(MockResponse().setResponseCode(302)
+                .setHeader("Location", "/hop/${hop + 1}").addHeader("Set-Cookie", "step$hop=ok; Path=/")) }
+            server.enqueue(MockResponse().setBody("logged in"))
+            val school = SchoolConfig("redirect-chain", "Synthetic", "${server.hostName}:${server.port}", "http")
+            val session = AcademicSession(AcademicSessionKey(school.id, "fixture"), server.url("/").toString())
+            try {
+                val result = AcademicHttpTransport(school, session).postForm(server.url("/login").toString(), listOf("credential" to "synthetic-only"))
+                assertEquals("logged in", result.text)
+                assertEquals(7, server.requestCount)
+                assertEquals("POST", server.takeRequest().method)
+                repeat(6) { hop ->
+                    val request = server.takeRequest()
+                    assertEquals("GET", request.method); assertEquals(0L, request.bodySize)
+                    assertTrue(request.getHeader("Cookie").orEmpty().contains("step$hop=ok"))
+                }
+            } finally { session.retire() }
+        }
+    }
+
+    @Test fun redirectLoopsStillStopAtTheBoundedLimit() = runBlocking {
+        MockWebServer().use { server ->
+            repeat(14) { server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/again")) }
+            val school = SchoolConfig("redirect-loop", "Synthetic", "${server.hostName}:${server.port}", "http")
+            val session = AcademicSession(AcademicSessionKey(school.id, "fixture"), server.url("/").toString())
+            try {
+                try { AcademicHttpTransport(school, session).get(server.url("/login").toString()); fail("Redirect loop must stop") }
+                catch (error: AcademicException) { assertEquals(AcademicStatus.PAGE_CHANGED, error.status) }
+                assertEquals(13, server.requestCount)
+            } finally { session.retire() }
+        }
+    }
 
     @Test fun huelCallbacksRetainPathAndQueryWhileKeepingTls() {
         val target = "http://xk.huel.edu.cn/jwglxt/xtgl/index_initMenu.html?gnmkdm=index&ticket=a%2Bb".toHttpUrl()

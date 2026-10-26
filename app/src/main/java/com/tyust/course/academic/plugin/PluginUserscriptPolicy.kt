@@ -127,6 +127,37 @@ internal class PluginUserscriptPolicy(val declaration: JSONObject, val manifest:
                     if (manifest.network.none { rule -> rule.getString("origin").toHttpUrlOrNull()?.host == route.getString("host") && "mutation" in PluginJson.strings(rule.getJSONArray("purposes")) &&
                             (route.getString("pathPrefix") == rule.getString("pathPrefix") || route.getString("pathPrefix").startsWith(rule.getString("pathPrefix").trimEnd('/') + "/")) }) invalid("持续任务提交端点未声明")
                 }
+                val plan = foreground.optJSONObject("script")
+                if (plan == null) {
+                    if (foreground.getInt("intervalSeconds") < 60) invalid("普通持续任务的检查间隔不能小于 60 秒")
+                    continue
+                }
+                if (manifest.json.optInt("minAppVersionCode") < 123 || PluginJson.objects(manifest.json.optJSONArray("requires") ?: JSONArray()).none { it.optString("name") == "tasks.foreground.start" && it.optInt("version") >= 2 }) invalid("脚本队列需要 App 123 与 tasks.foreground.start 版本 2")
+                if (foreground.has("batchInputKey") || foreground.getJSONArray("mutations").length() != 0) invalid("脚本队列不能叠加其他批次或网络写入授权")
+                val script = scripts.firstOrNull { it.getString("id") == plan.getString("id") && it.getString("serverId") == foreground.getString("serverId") } ?: invalid("队列脚本与服务账号不匹配")
+                if (servers.none { it.getString("id") == script.getString("serverId") && it.optJSONObject("browser")?.optString("engine") == "embedded" }) invalid("脚本队列需要嵌入引擎")
+                for (name in listOf("userscript.status", "userscript.start", "userscript.control", "userscript.configure", "userscript.action", "userscript.interact")) requires(name)
+                val starts = PluginJson.objects(plan.getJSONArray("starts"))
+                if (starts.map { PluginJson.canonical(it.getJSONObject("scope")) }.distinct().size != 1) invalid("队列启动地址必须使用同一个选择范围")
+                val policy = PluginUserscriptPolicy(script, manifest)
+                for (route in starts) { validateRoute(route); if (!policy.executes("https://${route.getString("host")}${route.getString("pathPrefix")}")) invalid("队列启动地址超出脚本声明") }
+                val adapter = script.getJSONObject("adapter")
+                val settings = PluginJson.objects(adapter.getJSONArray("settings"))
+                for (key in plan.getJSONObject("settings").keys()) {
+                    val setting = settings.firstOrNull { it.getString("key") == key } ?: invalid("队列不能配置未声明的设置")
+                    val value = plan.getJSONObject("settings").get(key)
+                    if (setting.getString("type") == "boolean" && value !is Boolean || PluginUserscriptStore.normalizedSetting(setting, value) == null) invalid("队列设置值无效")
+                }
+                val actions = PluginJson.objects(plan.getJSONArray("actions"))
+                val prompts = PluginJson.objects(plan.getJSONArray("prompts"))
+                if (actions.map { it.getString("id") }.distinct().size != actions.size || prompts.map { it.getString("id") }.distinct().size != prompts.size) invalid("队列操作重复")
+                for (action in actions) if (PluginJson.objects(adapter.optJSONArray("actions") ?: JSONArray()).none { it.getString("id") == action.getString("id") }) invalid("队列操作未在脚本适配中声明")
+                for (prompt in prompts) {
+                    if (prompt.getString("ruleId") == "native") {
+                        if (!adapter.optBoolean("browserPrompts") || prompt.optString("messageIncludes").isBlank() || prompt.getString("actionId") !in setOf("confirm", "cancel")) invalid("自动处理原生提示必须限定文字")
+                    } else if (PluginJson.objects(adapter.optJSONArray("dialogs") ?: JSONArray()).none { dialog -> dialog.getString("id") == prompt.getString("ruleId") && dialog.getString("kind") == "notice" &&
+                            PluginJson.objects(dialog.getJSONArray("actions")).any { it.getString("id") == prompt.getString("actionId") } }) invalid("队列只能处理已声明的普通提示")
+                }
             }
         }
         private fun validateRoute(route: JSONObject) {

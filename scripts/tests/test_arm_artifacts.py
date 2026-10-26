@@ -162,6 +162,39 @@ class ArmReceiptTests(unittest.TestCase):
 
 
 class ArmPublicationTests(unittest.TestCase):
+    def test_stale_public_metadata_waits_without_publishing_an_unverified_manifest(self):
+        for remains_stale in [False, True]:
+            with self.subTest(remains_stale=remains_stale), tempfile.TemporaryDirectory() as root:
+                root = Path(root); signed = {}; reads = []
+                def prepare(_apk, _receipt, _channel, site, _budget): site.mkdir(parents=True); return []
+                def sign(p, _key): signed.update(p); return {'synthetic': True}
+                def fetch(_url, target, _budget, expected=None, **_):
+                    if not expected:
+                        publish.assert_not_called()
+                        reads.append('metadata'); target.write_text('{}')
+                def verify(*_):
+                    return dict(signed, revision=signed['revision']-1) if remains_stale or len(reads) <= 2 else signed
+                with patch.object(d, 'verify_artifact_set'), patch.object(d, 'gh_api', return_value=None), \
+                     patch.object(d, 'prepare_static', side_effect=prepare), patch.object(d, 'deploy') as deploy, \
+                     patch.object(d, 'fetch', side_effect=fetch), patch.object(d, 'sign_manifest', side_effect=sign), \
+                     patch.object(d, 'verify_manifest', side_effect=verify), patch.object(d.time, 'sleep') as sleep, \
+                     patch.object(d, 'publish_updates') as publish:
+                    if remains_stale:
+                        with self.assertRaisesRegex(d.DeliveryError, 'Published artifact manifest differs; branch not advanced'):
+                            d.deploy_artifact_set(root/'app-release.apk', receipt(), 'test', 'notes', root/'report.json', d.Budget())
+                        publish.assert_not_called()
+                        self.assertEqual(deploy.call_count, 3)
+                        self.assertEqual(len(reads), 8)
+                        self.assertEqual([call.args[0] for call in sleep.call_args_list], [5, 15, 30]*2)
+                    else:
+                        d.deploy_artifact_set(root/'app-release.apk', receipt(), 'test', 'notes', root/'report.json', d.Budget())
+                        publish.assert_called_once()
+                        self.assertEqual(deploy.call_count, 2)
+                        self.assertEqual(len(reads), 3)
+                        self.assertEqual([call.args[0] for call in sleep.call_args_list], [5, 15])
+                self.assertEqual(json.loads((root/'report.json').read_text('utf-8'))['result'],
+                                 'failed' if remains_stale else 'verified')
+
     def test_failed_split_download_cannot_sign_or_publish_manifest(self):
         with tempfile.TemporaryDirectory() as root:
             root = Path(root)

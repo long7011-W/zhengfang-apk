@@ -18,6 +18,8 @@ object BuiltinAcademicInheritance {
         if (manifest.baseProvider?.removePrefix("builtin.") in GenericAcademicProtocols.providers) {
             if (manifest.baseProvider in setOf("builtin.eams", "builtin.chaoxing_academic") &&
                 (manifest.apiVersion != 3 || manifest.json.optInt("minAppVersionCode") < 113)) invalid("新增教务协议需要 API 3 与最低版本 113")
+            if (manifest.baseProvider == "builtin.kingo" && (manifest.apiVersion != 3 || manifest.json.optInt("minAppVersionCode") < 124)) invalid("青果协议需要 API 3 与最低版本 124")
+            if (manifest.json.optJSONObject("builtinConfig")?.has("webVpnTarget") == true && manifest.json.optInt("minAppVersionCode") < 124) invalid("WebVPN 协议配置需要最低版本 124")
             val school = SchoolConfig.fromJson(manifest.school).apply { academicSystem = manifest.baseProvider!!.removePrefix("builtin.") }
             return GenericAcademicProtocols.configuration(school, manifest.json.optJSONObject("builtinConfig"))
         }

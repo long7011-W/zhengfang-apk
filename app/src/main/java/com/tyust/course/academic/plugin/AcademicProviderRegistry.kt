@@ -123,7 +123,32 @@ object AcademicProviderRegistry {
         schoolPrefs()?.edit()?.putBoolean("disabled:${schoolKey(school)}:$id", !enabled)?.apply()
         providersChanged()
     }
-    @Synchronized fun choose(school: SchoolConfig, id: String?) { schoolPrefs()?.edit()?.apply { if (id == null) remove("provider:${schoolKey(school)}") else putString("provider:${schoolKey(school)}", id) }?.apply(); providersChanged() }
+    @Synchronized fun choose(school: SchoolConfig, id: String?) {
+        school.academicProvider = id.orEmpty()
+        UserManager.getInstance().updateSchoolConfig(school)
+        schoolPrefs()?.edit()?.apply {
+            if (id == null) remove("provider:${schoolKey(school)}") else putString("provider:${schoolKey(school)}", id)
+        }?.apply()
+        providersChanged()
+    }
+    /** Every explicit use action must replace both the saved school and its endpoint binding. */
+    @Synchronized fun bindSchool(pkg: PluginPackage, requested: SchoolConfig = school(pkg)): SchoolConfig {
+        require(pkg.manifest.isAcademic) { "普通界面插件不能替换学校教务" }
+        if (!isCurrentPackage(pkg.manifest.id, pkg.digest))
+            throw PluginException(PluginErrorCode.CONFLICT, "适配版本已改变，请重新选择")
+        val manager = UserManager.getInstance()
+        val existing = PluginSchoolSearch.existing(manager.supportedSchools, requested)
+        val target = existing ?: requested
+        require(matches(pkg, target)) { "适配不支持已保存的学校地址，请保留原配置或手动添加学校" }
+        val bound = SchoolConfig.fromJson(target.toJson()).apply {
+            academicSystem = school(pkg).academicSystem
+        }
+        if (existing == null) manager.addCustomSchool(bound)
+        setEnabled(pkg.manifest.id, true)
+        setSchoolEnabled(pkg.manifest.id, bound, true)
+        choose(bound, pkg.manifest.id)
+        return bound
+    }
     fun manualChoice(school: SchoolConfig): String = schoolPrefs()?.getString("provider:${schoolKey(school)}", null) ?: school.academicProvider.orEmpty()
     fun candidates(school: SchoolConfig): List<PluginPackage> = installed.values.filter { it.manifest.isAcademic && it.official && isEnabled(it.manifest.id, school) && matches(it, school) }.sortedBy { it.manifest.id }
     fun contributions(school: SchoolConfig, kind: String): List<Pair<PluginPackage, JSONObject>> = services(school).filter { it.manifest.isNative }.flatMap { pkg -> pkg.manifest.contributes.optJSONArray(kind)?.let(PluginJson::objects).orEmpty().map { pkg to it } }

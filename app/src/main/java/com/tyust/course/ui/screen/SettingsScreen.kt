@@ -29,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.AssignmentInd
 import androidx.compose.material.icons.outlined.Assignment
+import androidx.compose.material.icons.outlined.Campaign
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.ContentPasteSearch
 import androidx.compose.material.icons.automirrored.outlined.Login
@@ -36,10 +37,12 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.ManageAccounts
+import androidx.compose.material.icons.outlined.Map
 import androidx.compose.material.icons.outlined.Palette
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material.icons.outlined.School
 import androidx.compose.material.icons.outlined.SystemUpdate
+import androidx.compose.material.icons.outlined.VolumeOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -89,6 +92,8 @@ fun SettingsScreen(
     onSchoolAdaptation: () -> Unit = {},
     onSurveyCenter: () -> Unit = {},
     surveyUnreadCount: Int = 0,
+    onAnnouncementCenter: () -> Unit = {},
+    announcementUnreadCount: Int = 0,
     onWallpaperSelect: () -> Unit = {},
     wallpaperName: String = "",
     themeName: String = "跟随系统",
@@ -101,6 +106,8 @@ fun SettingsScreen(
     onNavBarAutoCollapseChange: (Boolean) -> Unit = {},
     usageEnabled: Boolean = true,
     onUsageEnabledChange: (Boolean) -> Unit = {},
+    classQuietSummary: String = "按课表静音，下课恢复原来的声音模式",
+    onClassQuietSettings: () -> Unit = {},
     isSuper: Boolean = false,
     quotaInfo: String = "",
     canRefreshCookie: Boolean = false,
@@ -109,6 +116,7 @@ fun SettingsScreen(
     onAcademicSupport: () -> Unit = {},
     onAcademicPlugins: () -> Unit = {},
     onCampusServices: () -> Unit = {},
+    onMapServices: () -> Unit = {},
     onQuickFeedback: () -> Unit = {}
 ) {
     val scrollState = rememberScrollState()
@@ -254,7 +262,28 @@ fun SettingsScreen(
                 )
             }
 
+            InsetGroupedSection(Modifier.moduleEntrance(3), header = "课表自动化") {
+                SettingsRow(icon = Icons.Outlined.VolumeOff, iconTint = MaterialTheme.colorScheme.primary,
+                    title = "上课自动静音", subtitle = classQuietSummary,
+                    onClick = onClassQuietSettings, showDivider = false)
+            }
+
             InsetGroupedSection(Modifier.moduleEntrance(3), header = "应用与支持") {
+                SettingsRow(icon = Icons.Outlined.Map, iconTint = MaterialTheme.colorScheme.primary,
+                    title = "地图服务", subtitle = "个人高德 Key、搜索额度与公共服务", onClick = onMapServices)
+                InsetGroupedRow(
+                    icon = Icons.Outlined.Campaign,
+                    iconTint = MaterialTheme.colorScheme.primary,
+                    title = "公告中心",
+                    subtitle = if (announcementUnreadCount > 0) "有 $announcementUnreadCount 条未读公告" else "查看功能动态与使用提醒",
+                    onClick = onAnnouncementCenter,
+                    trailing = {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            if (announcementUnreadCount > 0) Box(Modifier.size(8.dp).background(SemanticDanger, CircleShape))
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                )
                 InsetGroupedRow(
                     icon = Icons.Outlined.Assignment,
                     iconTint = MaterialTheme.colorScheme.primary,

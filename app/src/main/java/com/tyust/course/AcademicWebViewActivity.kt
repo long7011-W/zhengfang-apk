@@ -15,6 +15,8 @@ import android.webkit.WebResourceError
 import android.webkit.WebChromeClient
 import com.tyust.course.academic.AcademicUrlPolicy
 import com.tyust.course.academic.AcademicRedirects
+import com.tyust.course.academic.AcademicPasswordLoginGateway
+import com.tyust.course.academic.LntuWebLoginAssist
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -67,6 +69,10 @@ class AcademicWebViewActivity : ComponentActivity() {
         const val EXTRA_COOKIE_URL = "academic_cookie_url"
         const val EXTRA_PAGE_URL = "academic_page_url"
         const val EXTRA_SEARCH_KEYWORD = "academic_search_keyword"
+        const val EXTRA_COMPLETION_URL = "academic_completion_url"
+        const val EXTRA_SERVLET_SESSION = "academic_servlet_session"
+        const val EXTRA_USERNAME = "academic_login_username"
+        const val EXTRA_PASSWORD = "academic_login_password"
         private var suffixConfigured = false
     }
 
@@ -74,6 +80,15 @@ class AcademicWebViewActivity : ComponentActivity() {
     private var startUrl = ""
     private var cookieUrl = ""
     private var searchUrl = ""
+    private var completionUrl = ""
+    private var servletSession = false
+    private var assistedLogin = false
+    private var assistedUsername = ""
+    private var assistedPassword = ""
+    private var submissionAttempted = false
+    private var submissionInFlight = false
+    private var readinessRetries = 0
+    private var portalVisited = false
     private var currentUrl by mutableStateOf("")
     private var allowedHosts: Set<String> = emptySet()
     private var loadingProgress by mutableFloatStateOf(0f)
@@ -84,6 +99,18 @@ class AcademicWebViewActivity : ComponentActivity() {
         applyAdaptiveOrientation()
         startUrl = intent.getStringExtra(EXTRA_START_URL).orEmpty()
         cookieUrl = intent.getStringExtra(EXTRA_COOKIE_URL).orEmpty().ifBlank { startUrl }
+        completionUrl = intent.getStringExtra(EXTRA_COMPLETION_URL).orEmpty()
+        servletSession = intent.getBooleanExtra(EXTRA_SERVLET_SESSION, false)
+        assistedLogin = LntuWebLoginAssist.supports(startUrl, cookieUrl, completionUrl)
+        if (assistedLogin) {
+            assistedUsername = intent.getStringExtra(EXTRA_USERNAME).orEmpty()
+            assistedPassword = intent.getStringExtra(EXTRA_PASSWORD).orEmpty()
+        }
+        // Credentials are only held for this attempt, never in browser URLs or saved state.
+        intent.removeExtra(EXTRA_USERNAME)
+        intent.removeExtra(EXTRA_PASSWORD)
+        submissionAttempted = savedInstanceState?.getBoolean("submissionAttempted") ?: false
+        portalVisited = savedInstanceState?.getBoolean("portalVisited") ?: false
         val keyword = intent.getStringExtra(EXTRA_SEARCH_KEYWORD).orEmpty()
         searchUrl = WebLoginNavigation.searchUrl(keyword.ifBlank { "教务系统 登录" })
         val initialUrl = if (keyword.isNotBlank()) searchUrl else startUrl
@@ -92,7 +119,8 @@ class AcademicWebViewActivity : ComponentActivity() {
             .map { normalizeHost(it) }
             .filter { it.isNotBlank() }
             .toSet()
-        if (!WebLoginNavigation.isWebUrl(startUrl) || !isCookieUrlAllowed()) {
+        if (!WebLoginNavigation.isWebUrl(startUrl) || !isCookieUrlAllowed() ||
+            (completionUrl.isNotBlank() && !AcademicUrlPolicy.isAllowed(completionUrl, Uri.parse(startUrl).scheme.orEmpty(), allowedHosts))) {
             Toast.makeText(this, "教务地址不在允许范围内", Toast.LENGTH_LONG).show()
             setResult(Activity.RESULT_CANCELED)
             finish()
@@ -147,7 +175,7 @@ class AcademicWebViewActivity : ComponentActivity() {
                         )
                         if (!keyboardOpen) Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Text(
-                                text = pageError ?: "完成学校验证后，点“完成登录”返回应用",
+                                text = pageError ?: if (assistedLogin) "请完成学校验证，进入教务后将自动返回应用" else "完成学校验证后，点“完成登录”返回应用",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = if (pageError != null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -185,6 +213,7 @@ class AcademicWebViewActivity : ComponentActivity() {
 
     @SuppressLint("SetJavaScriptEnabled")
     private fun createWebView(): WebView = WebView(this).apply {
+        if (BuildConfig.DEBUG) WebView.setWebContentsDebuggingEnabled(true)
         val webViewInstance = this
         layoutParams = ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
         settings.javaScriptEnabled = true
@@ -218,6 +247,7 @@ class AcademicWebViewActivity : ComponentActivity() {
             override fun onPageFinished(view: WebView, url: String) {
                 loadingProgress = 1f
                 currentUrl = url
+                if (view.url == url) continueSchoolLogin(view, url)
             }
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 if (request.isForMainFrame) {
@@ -244,7 +274,12 @@ class AcademicWebViewActivity : ComponentActivity() {
     }
 
     private fun finishWithCookie() {
+        if (isFinishing || isDestroyed) return
         if (!isCookieUrlAllowed()) return
+        if (completionUrl.isNotBlank() && !AcademicPasswordLoginGateway.matchesCompletion(completionUrl, webView?.url.orEmpty(), servletSession)) {
+            pageError = "请先完成学校验证并进入教务主页"
+            return
+        }
         val cookie = CookieManager.getInstance().getCookie(cookieUrl).orEmpty().trim()
         if (cookie.isBlank()) {
             Toast.makeText(this, "请先登录并进入 ${Uri.parse(cookieUrl).host} 的教务主页", Toast.LENGTH_LONG).show()
@@ -253,6 +288,40 @@ class AcademicWebViewActivity : ComponentActivity() {
         CookieManager.getInstance().flush()
         setResult(Activity.RESULT_OK, Intent().putExtra(EXTRA_COOKIE_RESULT, cookie).putExtra(EXTRA_PAGE_URL, webView?.url))
         finish()
+    }
+
+    private fun continueSchoolLogin(browser: WebView, url: String) {
+        if (!assistedLogin || isFinishing || isDestroyed) return
+        when {
+            LntuWebLoginAssist.isLoginPage(url) && !submissionAttempted && !submissionInFlight &&
+                assistedUsername.isNotBlank() && assistedPassword.isNotEmpty() -> {
+                submissionInFlight = true
+                val script = LntuWebLoginAssist.submitScript(assistedUsername, assistedPassword)
+                browser.evaluateJavascript(script) { result ->
+                    submissionInFlight = false
+                    if (isFinishing || isDestroyed) return@evaluateJavascript
+                    if (BuildConfig.DEBUG) android.util.Log.d("AcademicWebLogin", "LNTU form result=$result")
+                    if (browser.url == url && result == "\"form-unavailable\"" && readinessRetries++ < 40) {
+                        browser.postDelayed({ if (browser.url == url) continueSchoolLogin(browser, url) }, 250)
+                    } else {
+                        submissionAttempted = true
+                        assistedPassword = ""
+                        if (browser.url == url && result !in setOf("\"submitted\"", "\"already-submitted\"", "\"manual\"")) {
+                            pageError = "学校登录页暂不支持自动填写，请在网页中继续登录"
+                        }
+                    }
+                }
+            }
+            LntuWebLoginAssist.isPortalPage(url) && !portalVisited -> {
+                portalVisited = true
+                browser.loadUrl(completionUrl)
+            }
+            LntuWebLoginAssist.isCompletionPage(url) -> {
+                browser.evaluateJavascript(LntuWebLoginAssist.signedInScript(assistedUsername)) { result ->
+                    if (result == "true" && !isFinishing && !isDestroyed && browser.url == url) finishWithCookie()
+                }
+            }
+        }
     }
 
     private fun navigateBack() {
@@ -289,12 +358,16 @@ class AcademicWebViewActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
+        assistedPassword = ""
+        assistedUsername = ""
         webView?.apply { stopLoading(); destroy() }
         webView = null
         super.onDestroy()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean("submissionAttempted", submissionAttempted)
+        outState.putBoolean("portalVisited", portalVisited)
         webView?.let { browser -> outState.putBundle("browser", Bundle().also { browser.saveState(it) }) }
         super.onSaveInstanceState(outState)
     }

@@ -19,7 +19,7 @@ object GenericAcademicProtocols {
     }
     val providers = mapOf("zf" to "org.zf.protocol.zf", "legacy_zf" to "org.zf.protocol.zf",
         "zf_old" to "org.zf.protocol.zf-old", "qz" to "org.zf.protocol.qz", "qz_old" to "org.zf.protocol.qz-old",
-        "eams" to "org.zf.protocol.eams", "chaoxing_academic" to "org.zf.protocol.chaoxing-academic")
+        "kingo" to "org.zf.protocol.kingo", "eams" to "org.zf.protocol.eams", "chaoxing_academic" to "org.zf.protocol.chaoxing-academic")
     fun configuration(school: SchoolConfig, options: JSONObject? = null): JSONObject = JSONObject(school.toJson().toString()).put("baseUrl", school.fullBasePath.trimEnd('/')).apply {
         val url = school.fullBasePath.toHttpUrlOrNull() ?: error("Invalid school URL")
         if (url.host == "jwxt.hut.edu.cn" && url.port in setOf(80, 443) && url.encodedPath.trimEnd('/') == "/jsxsd") {

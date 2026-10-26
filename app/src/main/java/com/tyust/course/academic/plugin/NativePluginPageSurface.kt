@@ -56,7 +56,7 @@ internal fun NativePluginPageSurface(
     }
     val content: @Composable (PaddingValues) -> Unit = { padding ->
         Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding(), contentAlignment = Alignment.TopCenter) {
-            Column(viewportModifier.widthIn(max = 840.dp).fillMaxSize().padding(horizontal = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(viewportModifier.widthIn(max = 840.dp).fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (!standalone && snapshot.navigation?.backEvent != null) Row(
                     Modifier.fillMaxWidth().heightIn(min = 56.dp), verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(12.dp)

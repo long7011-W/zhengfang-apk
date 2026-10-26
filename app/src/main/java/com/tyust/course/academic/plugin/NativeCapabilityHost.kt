@@ -68,7 +68,7 @@ class NativeCapabilityHost internal constructor(
     fun capabilities(): JSONArray = JSONArray(descriptors.filter { descriptor ->
         descriptor.getString("name") in (IMPLEMENTED + PLATFORM) &&
             (android.os.Build.VERSION.SDK_INT >= 26 || !descriptor.getString("name").startsWith("browser.session.")) &&
-            (interaction != null || !descriptor.getBoolean("userGesture") && !descriptor.getString("name").startsWith("navigation."))
+            (interaction != null || foregroundGrant?.script?.supports(descriptor.getString("name")) == true || !descriptor.getBoolean("userGesture") && !descriptor.getString("name").startsWith("navigation."))
     })
     fun requireCompatible() {
         val available = PluginJson.objects(capabilities()).associate { it.getString("name") to it.getInt("version") }
@@ -105,7 +105,8 @@ class NativeCapabilityHost internal constructor(
         val descriptor = PluginJson.objects(capabilities()).firstOrNull { it.getString("name") == name && effect.getInt("version") in 1..it.getInt("version") }
             ?: throw PluginException(PluginErrorCode.UNSUPPORTED, "宿主未提供此版本的能力：$name")
         if (descriptor.getString("permission") !in pkg.manifest.permissions) denied("插件未声明 ${descriptor.getString("permission")} 权限")
-        if (descriptor.getBoolean("userGesture") && !flow.userGesture && !(name == "academic.session.authorize" && academicSession.siteAuthorized())) denied("此设备交互必须由你发起")
+        val scriptGrant = foregroundGrant?.script?.takeIf { it.supports(name) }
+        if (descriptor.getBoolean("userGesture") && !flow.userGesture && scriptGrant == null && !(name == "academic.session.authorize" && academicSession.siteAuthorized())) denied("此设备交互必须由你发起")
         val input = effect.getJSONObject("input")
         schema.validate(input, descriptor.getJSONObject("input"))
         val request = when (name) { "network.request" -> input; "files.download", "files.upload" -> input.getJSONObject("request"); else -> null }
@@ -174,7 +175,8 @@ class NativeCapabilityHost internal constructor(
                 "records.upsert" -> withContext(Dispatchers.IO) { records.upsert(input) }
                 "records.query" -> withContext(Dispatchers.IO) { records.query(input) }
                 "userscript.status" -> PluginUserscripts.status(app, pkg, session, input.getString("scriptId"))
-                "userscript.configure" -> PluginUserscripts.configure(app, pkg, session, input)
+                "userscript.configure" -> if (scriptGrant != null) PluginEmbeddedBrowser.configureScriptForQueue(app, pkg, session, input, vault, scriptGrant)
+                    else PluginUserscripts.configure(app, pkg, session, input, vault)
                 "userscript.update" -> {
                     val status = PluginUserscripts.status(app, pkg, session, input.getString("scriptId"))
                     if (!status.optBoolean("subscribed")) confirm(flow, "订阅原脚本", "原脚本从插件声明的官方来源下载，保留作者和许可信息。启用后自动检查更新，新版将在下次任务运行。")
@@ -183,19 +185,29 @@ class NativeCapabilityHost internal constructor(
                 "userscript.rollback" -> PluginUserscripts.rollback(app, pkg, session, input.getString("scriptId"))
                 "userscript.start" -> {
                     if (PluginEmbeddedBrowser.enabled(pkg, session)) PluginEmbeddedBrowser.requireSupport() else PluginUserscripts.requireSupport()
-                    continuousPermission(flow, "启动原脚本任务", "按原脚本当前设置处理课程内容，包括已开启的答题和自动提交。离开页面后继续运行，可从常驻通知停止。考试页面不在运行范围。")
-                    PluginUserscripts.start(app, pkg, session, input.getString("scriptId"), input.getString("url"))
+                    if (scriptGrant != null) PluginEmbeddedBrowser.startScript(app, pkg, session, input.getString("scriptId"), input.getString("url"), scriptGrant)
+                    else {
+                        continuousPermission(flow, "启动原脚本任务", "按原脚本当前设置处理课程内容，包括已开启的答题和自动提交。离开页面后继续运行，可从常驻通知停止。考试页面不在运行范围。")
+                        PluginUserscripts.start(app, pkg, session, input.getString("scriptId"), input.getString("url"))
+                    }
                 }
-                "userscript.control" -> PluginUserscripts.control(app, pkg, session, input)
-                "userscript.interact", "userscript.action" -> PluginEmbeddedBrowser.interactScript(app, pkg, session, input, name == "userscript.action")
+                "userscript.control" -> if (scriptGrant != null) PluginEmbeddedBrowser.controlScript(app, pkg, session, input, scriptGrant) else PluginUserscripts.control(app, pkg, session, input)
+                "userscript.interact", "userscript.action" -> PluginEmbeddedBrowser.interactScript(app, pkg, session, input, name == "userscript.action", vault, scriptGrant)
                 "browser.session.open" -> PluginEmbeddedBrowser.openUrl(app, pkg, session, input)
                 "browser.session.status", "browser.session.close" -> PluginEmbeddedBrowser.pageControl(app, pkg, session, input.getString("handle"), name.endsWith("close"))
                 "tasks.foreground.start" -> {
                     val task = NativePluginContract.contribution(pkg.manifest, "tasks", input.getString("taskId"))
                     val declaration = task.optJSONObject("foreground") ?: throw PluginException(PluginErrorCode.UNSUPPORTED, "任务没有声明持续运行")
+                    val automatic = declaration.optJSONObject("script")
+                    if (automatic != null && effect.getInt("version") < 2) denied("脚本队列需要 tasks.foreground.start 版本 2")
                     val batch = input.getJSONObject("input").optJSONArray(declaration.optString("batchInputKey"))
                     val names = PluginJson.objects(batch ?: JSONArray()).map { it.optString("name", it.optString("id", "所选项目")) }.joinToString("、").take(600)
-                    continuousPermission(flow, task.getString("title"), "每 ${declaration.getInt("intervalSeconds")} 秒错峰检查${if (names.isBlank()) "所选范围" else "：$names"}。仅对本次范围自动尝试声明的操作，需验证时通知你继续。可随时从常驻通知停止。")
+                    val queueDescription = automatic?.let { plan ->
+                        val script = PluginJson.objects(pkg.manifest.json.getJSONArray("userscripts")).first { it.getString("id") == plan.getString("id") }
+                        val labels = PluginJson.objects(script.getJSONObject("adapter").optJSONArray("actions") ?: JSONArray()).associate { it.getString("id") to it.getString("label") }
+                        NativeForegroundScriptGrant(plan, input.getJSONObject("input")) { runCatching { ensureActive() }.isSuccess }.description(labels)
+                    }
+                    continuousPermission(flow, task.getString("title"), queueDescription ?: "每 ${declaration.getInt("intervalSeconds")} 秒错峰检查${if (names.isBlank()) "所选范围" else "：$names"}。仅对本次范围自动尝试声明的操作，需验证时通知你继续。可随时从常驻通知停止。")
                     NativeForegroundTasks.start(app, pkg, session, namespace, input)
                 }
                 "tasks.foreground.stop" -> { NativeForegroundTasks.stop(app, namespace, input.getString("handle")); JSONObject.NULL }

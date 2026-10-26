@@ -469,6 +469,10 @@ public class UserManager {
         if (accountKey == null || accountKey.isEmpty()) return "";
         String storageKey = toStorageKey(accountKey);
 
+        // Remove the active legacy login too. Otherwise a later background init can
+        // migrate that cookie back into an account after its last record was deleted.
+        if (accountKey.equals(currentAccountKey)) clearLoginState();
+
         if (appContext != null) {
             com.tyust.course.schedule.ScheduleReminderScheduler.get(appContext).clearAccount(storageKey);
             GradeBrowsePreferences.from(appContext).removeAccount(storageKey);

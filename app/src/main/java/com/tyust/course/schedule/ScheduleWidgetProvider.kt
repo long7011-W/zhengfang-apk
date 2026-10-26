@@ -40,14 +40,16 @@ open class ScheduleWidgetProvider : AppWidgetProvider() {
 
 class ScheduleSingleWidgetProvider : ScheduleWidgetProvider()
 class ScheduleTimelineWidgetProvider : ScheduleWidgetProvider()
+class ScheduleCountdownWidgetProvider : ScheduleWidgetProvider()
 
 enum class ScheduleWidgetStyle(val title: String, val description: String, val provider: Class<out AppWidgetProvider>) {
     Single("简洁单课", "1×1 · 课名、时间与地点，放大查看更多", ScheduleSingleWidgetProvider::class.java),
     Double("双课程", "2×1 · 两张课程卡，放大补充教师与状态", ScheduleWidgetProvider::class.java),
-    Timeline("课程时间轴", "2×2 · 今日时间轴，拉大查看更多课程", ScheduleTimelineWidgetProvider::class.java)
+    Timeline("课程时间轴", "2×2 · 今日时间轴，拉大查看更多课程", ScheduleTimelineWidgetProvider::class.java),
+    Countdown("倒计时", "2×1 · 距上课与下课还有多久，实时走动", ScheduleCountdownWidgetProvider::class.java)
 }
 
-/** Only local cache reads and an inexact, non-wakeup boundary alarm; never performs authentication. */
+/** Local cache reads and a non-wakeup boundary alarm; never performs authentication. */
 object ScheduleWidgetUpdater {
     const val ACTION_REFRESH = "com.tyust.course.action.REFRESH_SCHEDULE_WIDGET"
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -57,9 +59,11 @@ object ScheduleWidgetUpdater {
 
     fun requestPin(context: Context, style: ScheduleWidgetStyle = ScheduleWidgetStyle.Double) {
         val manager = AppWidgetManager.getInstance(context)
-        if (android.os.Build.VERSION.SDK_INT >= 26 && manager.isRequestPinAppWidgetSupported) {
-            manager.requestPinAppWidget(ComponentName(context, style.provider), null, null)
-        } else com.tyust.course.ui.system.GlassToaster.show("长按桌面，在小组件中添加“${style.title}”")
+        // Vendor launchers can report pin support and then do nothing (their own picker cannot
+        // resolve the provider). Never leave the tap silent: fall back to written instructions.
+        val accepted = android.os.Build.VERSION.SDK_INT >= 26 && manager.isRequestPinAppWidgetSupported &&
+            runCatching { manager.requestPinAppWidget(ComponentName(context, style.provider), null, null) }.getOrDefault(false)
+        if (!accepted) com.tyust.course.ui.system.GlassToaster.show("长按桌面，在小组件中添加“${style.title}”")
     }
 
     fun start(context: Context) {
@@ -81,12 +85,9 @@ object ScheduleWidgetUpdater {
 
     internal fun activeSnapshot(context: Context): ScheduleSnapshot? {
         val user = UserManager.getInstance()
-        val session = user.sessionState.state.value
+        val account = activeScheduleAccount(user) ?: return null
         val school = user.currentSchool ?: return null
-        if (user.isDemoMode || (!user.isLoggedIn && !(session.expired && user.hasSavedCookie())) ||
-            session.token.accountStorageKey != user.currentAccountStorageKey ||
-            user.savedAccounts.none { it.key == user.currentAccountKey }) return null
-        return ScheduleRepository(context).snapshot(user.currentAccountStorageKey, school.id)
+        return ScheduleRepository(context).snapshot(account, school.id)
     }
 
     fun update(context: Context) {
@@ -94,7 +95,7 @@ object ScheduleWidgetUpdater {
         val ids = ScheduleWidgetStyle.entries.flatMap { style ->
             manager.getAppWidgetIds(ComponentName(context, style.provider)).map { it to style }
         }
-        if (ids.isEmpty()) { cancel(context); return }
+        if (ids.isEmpty()) { cancel(context); ScheduleBackgroundRefresh.sync(context); return }
         val now = System.currentTimeMillis()
         val state = ScheduleWidgetState.from(activeSnapshot(context), now)
         ids.forEach { (id, style) ->
@@ -103,9 +104,9 @@ object ScheduleWidgetUpdater {
         }
         cancel(context)
         state.agenda?.let { agenda ->
-            context.getSystemService(AlarmManager::class.java).set(AlarmManager.RTC,
-                agenda.nextChangeAt.coerceAtLeast(now + 1_000), alarm(context))
+            ScheduleWidgetBoundaryAlarm.schedule(context, agenda.nextChangeAt.coerceAtLeast(now + 1_000), alarm(context))
         }
+        ScheduleBackgroundRefresh.sync(context)
     }
 
     private fun alarm(context: Context) = PendingIntent.getBroadcast(context, 0,

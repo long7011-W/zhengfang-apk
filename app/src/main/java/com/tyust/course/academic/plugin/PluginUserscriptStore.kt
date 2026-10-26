@@ -2,7 +2,7 @@ package com.tyust.course.academic.plugin
 
 import android.content.Context
 import android.util.AtomicFile
-import com.dokar.quickjs.QuickJs
+import com.tyust.course.academic.plugin.runtime.PluginQuickJs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -42,6 +42,28 @@ internal class PluginUserscriptStore(app: Context, val policy: PluginUserscriptP
         val settings = settings().put(key, value)
         if (settings.toString().toByteArray().size > 262144 || settings.length() > 256) throw PluginException(PluginErrorCode.RESOURCE_LIMIT, "脚本存储超过限额")
         vault.put("userscript:${policy.id}:settings", settings)
+    }
+    fun configure(input: JSONObject, credentialVault: NativePluginVault? = null) = synchronized(lock) {
+        requireActive()
+        val declared = PluginJson.objects(policy.declaration.getJSONObject("adapter").getJSONArray("settings")).associateBy { it.getString("key") }
+        val values = input.optJSONObject("values") ?: JSONObject()
+        val normalized = values.keys().asSequence().associateWith { key ->
+            val setting = declared[key] ?: throw PluginException(PluginErrorCode.VALIDATION_FAILED, "没有这个原脚本设置")
+            normalizedSetting(setting, values.get(key)) ?: throw PluginException(PluginErrorCode.VALIDATION_FAILED, "脚本设置超出范围")
+        }
+        val credential = input.optJSONObject("credential")
+        val secret = credential?.let {
+            if (it.getString("key") !in PluginJson.strings(policy.declaration.optJSONArray("sensitiveKeys")))
+                throw PluginException(PluginErrorCode.PERMISSION_DENIED, "未声明这个敏感 GM 键")
+            // auth.prompt may create a memory-only handle. Resolve it in the
+            // calling page's vault, before writing the script's own settings.
+            val source = credentialVault ?: throw PluginException(PluginErrorCode.SESSION_EXPIRED, "输入凭据已失效，请重新输入")
+            source.credentialField(it).also { value ->
+                if (value.isBlank()) throw PluginException(PluginErrorCode.VALIDATION_FAILED, "请填写凭据内容")
+            }
+        }
+        normalized.forEach { (key, value) -> putSetting(key, value) }
+        if (credential != null && secret != null) putSetting(credential.getString("key"), secret)
     }
     fun publicStatus(): JSONObject {
         val status = metadata()
@@ -89,12 +111,11 @@ internal class PluginUserscriptStore(app: Context, val policy: PluginUserscriptP
                 val parsed = UserscriptMetadata.validate(source, policy)
                 if (parsed.version != remote.version) throw PluginException(PluginErrorCode.VALIDATION_FAILED, "更新元信息与脚本版本不一致")
                 if (syntaxOverride != null) syntaxOverride.invoke(source) else {
-                    val engine = QuickJs.create(Dispatchers.IO)
-                    try {
+                    PluginQuickJs.withEngine { engine ->
                         engine.memoryLimit = 16L * 1024 * 1024
                         engine.evaluationTimeoutMillis = 5000
                         engine.evaluate<Unit>("void new Function(" + JSONObject.quote(source) + ");")
-                    } finally { engine.close() }
+                    }
                 }
                 currentCoroutineContext().ensureActive()
                 val digest = PluginJson.sha256(source.toByteArray())

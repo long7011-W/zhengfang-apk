@@ -15,6 +15,7 @@ import java.util.concurrent.ConcurrentHashMap
 internal class NativeForegroundGrant(declaration: JSONObject, input: JSONObject, private val active: () -> Boolean) {
     private val rules = PluginJson.objects(JSONObject(declaration.toString()).getJSONArray("mutations"))
     private val selection = JSONObject(input.toString())
+    val script = declaration.optJSONObject("script")?.let { NativeForegroundScriptGrant(it, selection, active) }
     fun requireRequest(url: HttpUrl, method: String, purpose: String, form: JSONObject?) {
         if (!active()) throw PluginException(PluginErrorCode.STALE_CONTEXT, "持续任务的账号、版本或授权已失效")
         if (purpose != "mutation") return
@@ -105,6 +106,7 @@ internal object NativeForegroundTasks {
             var ownedSession: AcademicSession? = null
             var lease: AutoCloseable? = null
             var ownedHost: NativeCapabilityHost? = null
+            var scriptGrant: NativeForegroundScriptGrant? = null
             var flow = NativeFlow(false)
             try {
                 val session = accounts.session(pkg, serverId).also { ownedSession = it }
@@ -113,6 +115,7 @@ internal object NativeForegroundTasks {
                     AcademicProviderRegistry.isCurrentPackage(pkg.manifest.id, pkg.digest) && AcademicProviderRegistry.isEnabled(pkg.manifest.id) &&
                     runCatching { load(app, handle).optString("status") == "running" }.getOrDefault(false)
                 val grant = NativeForegroundGrant(declaration, input.getJSONObject("input"), ::active)
+                scriptGrant = grant.script
                 val host = NativeCapabilityHost(app, pkg, session, null, foregroundGrant = grant, active = ::active).also { ownedHost = it }
                 while (active()) {
                     val cycleStart = android.os.SystemClock.elapsedRealtime()
@@ -129,6 +132,12 @@ internal object NativeForegroundTasks {
                             state = result.get("state")
                             record = load(app, handle).put("state", state).put("updatedAt", System.currentTimeMillis())
                             save(app, record)
+                            if (result.optBoolean("done")) {
+                                if (PluginJson.objects(pkg.manifest.json.optJSONArray("requires") ?: JSONArray()).none { it.optString("name") == "tasks.foreground.start" && it.optInt("version") >= 2 } || result.getJSONArray("effects").length() != 0)
+                                    throw PluginException(PluginErrorCode.VALIDATION_FAILED, "完成持续任务需要版本 2 且不能遗留效果")
+                                updateIfPresent(app, handle) { it.put("status", "completed") }
+                                break
+                            }
                             // Deliver an unknown result once, persist the reducer's reconciliation state,
                             // then give the next tick a fresh bounded flow. Never replay writes here.
                             if (uncertain) break
@@ -144,6 +153,7 @@ internal object NativeForegroundTasks {
                                 if (uncertain) break
                             }
                         }
+                        if (!active()) break
                         val due = cycleStart + declaration.getLong("intervalSeconds") * 1000 * (index + 1) / batch.size
                         delay((due - android.os.SystemClock.elapsedRealtime()).coerceAtLeast(1000))
                     }
@@ -154,6 +164,16 @@ internal object NativeForegroundTasks {
                 updateIfPresent(app, handle) { it.put("status", "failed").put("message", if (e is PluginException) e.message.orEmpty() else "任务中断，请重新打开后核对状态") }
             }
             finally {
+                // Explicit stop/cancellation also stops scripts created by this queue.
+                // A normally completed task may hand an unfinished prompt back to its native UI.
+                if (runCatching { load(app, handle).optString("status") != "completed" }.getOrDefault(true)) {
+                    withContext(NonCancellable) {
+                        val session = ownedSession
+                        if (session != null) for (scriptHandle in scriptGrant?.handles().orEmpty()) runCatching {
+                            PluginEmbeddedBrowser.controlScript(app, pkg, session, JSONObject().put("handle", scriptHandle).put("action", "stop"))
+                        }
+                    }
+                }
                 ownedHost?.close(); ownedSession?.retire(); lease?.close(); running.remove(handle)
                 updateIfPresent(app, handle) { if (it.optString("status") == "running") it.put("status", "interrupted") }
                 discarded.remove(handle)

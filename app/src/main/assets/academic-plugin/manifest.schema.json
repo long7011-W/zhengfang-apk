@@ -44,7 +44,8 @@
         "builtin.jinzhi",
         "builtin.chengfang",
         "builtin.eams",
-        "builtin.chaoxing_academic"
+        "builtin.chaoxing_academic",
+        "builtin.kingo"
       ]
     },
     "entry": {
@@ -151,6 +152,10 @@
                 "examTable"
               ]
             },
+            "webVpnTarget": {
+              "type": "string",
+              "pattern": "^[a-z0-9.-]+(?::[1-9][0-9]{0,4})?$"
+            },
             "periods": {
               "type": "array",
               "items": {
@@ -196,6 +201,52 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 2000
+            }
+          },
+          "required": [
+            "protocol"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "protocol": {
+              "const": "kingo"
+            },
+            "loginUrl": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 2000
+            },
+            "periods": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "number": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 30
+                  },
+                  "start": {
+                    "type": "string",
+                    "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+                  },
+                  "end": {
+                    "type": "string",
+                    "pattern": "^(?:[01][0-9]|2[0-3]):[0-5][0-9]$"
+                  }
+                },
+                "required": [
+                  "number",
+                  "start",
+                  "end"
+                ],
+                "additionalProperties": false
+              },
+              "maxItems": 30,
+              "minItems": 1
             }
           },
           "required": [
@@ -1205,7 +1256,7 @@
                   },
                   "intervalSeconds": {
                     "type": "integer",
-                    "minimum": 60,
+                    "minimum": 5,
                     "maximum": 3600
                   },
                   "batchInputKey": {
@@ -1264,6 +1315,157 @@
                       "additionalProperties": false
                     },
                     "maxItems": 32
+                  },
+                  "script": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "maxLength": 96,
+                        "minLength": 1,
+                        "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                      },
+                      "starts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "host": {
+                              "type": "string",
+                              "maxLength": 253,
+                              "minLength": 1
+                            },
+                            "pathPrefix": {
+                              "type": "string",
+                              "maxLength": 1024,
+                              "pattern": "^/"
+                            },
+                            "scope": {
+                              "type": "object",
+                              "properties": {
+                                "inputList": {
+                                  "type": "string",
+                                  "maxLength": 96,
+                                  "minLength": 1,
+                                  "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                                },
+                                "parameters": {
+                                  "type": "object",
+                                  "minProperties": 1,
+                                  "maxProperties": 8,
+                                  "additionalProperties": {
+                                    "type": "string",
+                                    "maxLength": 96,
+                                    "minLength": 1,
+                                    "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                                  }
+                                }
+                              },
+                              "required": [
+                                "inputList",
+                                "parameters"
+                              ],
+                              "additionalProperties": false
+                            }
+                          },
+                          "required": [
+                            "host",
+                            "pathPrefix",
+                            "scope"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "maxItems": 8,
+                        "minItems": 1
+                      },
+                      "settings": {
+                        "type": "object",
+                        "maxProperties": 16,
+                        "additionalProperties": {
+                          "type": [
+                            "boolean",
+                            "number"
+                          ]
+                        }
+                      },
+                      "actions": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "maxLength": 96,
+                              "minLength": 1,
+                              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                            },
+                            "when": {
+                              "type": "string",
+                              "maxLength": 96,
+                              "minLength": 1,
+                              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                            }
+                          },
+                          "required": [
+                            "id"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "maxItems": 16
+                      },
+                      "prompts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "maxLength": 96,
+                              "minLength": 1,
+                              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                            },
+                            "ruleId": {
+                              "type": "string",
+                              "maxLength": 96,
+                              "minLength": 1,
+                              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                            },
+                            "actionId": {
+                              "type": "string",
+                              "maxLength": 96,
+                              "minLength": 1,
+                              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                            },
+                            "messageIncludes": {
+                              "type": "string",
+                              "maxLength": 160,
+                              "minLength": 1
+                            },
+                            "when": {
+                              "type": "string",
+                              "maxLength": 96,
+                              "minLength": 1,
+                              "pattern": "^[a-zA-Z][a-zA-Z0-9_.:-]{0,95}$"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "ruleId",
+                            "actionId"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "maxItems": 16
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "starts",
+                      "settings",
+                      "actions",
+                      "prompts"
+                    ],
+                    "additionalProperties": false
                   }
                 },
                 "required": [
@@ -1650,7 +1852,7 @@
         ],
         "additionalProperties": false
       },
-      "maxItems": 60
+      "maxItems": 80
     },
     "school": {
       "type": "object",

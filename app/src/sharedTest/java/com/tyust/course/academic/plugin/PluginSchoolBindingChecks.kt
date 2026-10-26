@@ -5,6 +5,7 @@ import android.util.Base64
 import com.tyust.course.academic.AcademicException
 import com.tyust.course.academic.AcademicStatus
 import com.tyust.course.model.SchoolConfig
+import com.tyust.course.manager.UserManager
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -22,6 +23,7 @@ import java.util.zip.ZipOutputStream
 
 abstract class PluginSchoolBindingChecks {
     protected abstract fun testContext(): Context
+    protected open suspend fun verifyExtensionLogin(school: SchoolConfig) = Unit
     private val key = KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
     private lateinit var context: Context
     private val fixtureIds = mutableSetOf<String>()
@@ -60,15 +62,23 @@ abstract class PluginSchoolBindingChecks {
         JSONObject().put("id", "sample-$path").put("name", "虚构学校").put("protocol", "https").put("domain", domain).put("basePath", path))
     private fun signature(payload: JSONObject) = JSONObject().put("keyId", "binding-test").put("signature", Base64.encodeToString(
         Signature.getInstance("SHA256withECDSA").run { initSign(key.private); update(PluginJson.canonical(payload).toByteArray()); sign() }, Base64.NO_WRAP))
-    private suspend fun install(id: String, path: String = "/campus-a", version: String = "1.0.0", official: Boolean = true): PluginPackage {
+    private suspend fun install(id: String, path: String = "/campus-a", version: String = "1.0.0", official: Boolean = true,
+                                schoolDefinition: JSONObject? = null, source: String? = null): PluginPackage {
         val manifest = JSONObject().put("id", id).put("name", "虚构适配").put("version", version).put("apiVersion", 2)
             .put("kind", "configuration").put("extends", "builtin.zf").put("capabilities", JSONArray())
             .put("network", JSONArray()).put("files", JSONObject()).put("school", JSONObject()
                 .put("id", "sample").put("name", "虚构学校").put("domain", "jw.example.test").put("protocol", "https").put("basePath", path))
+        schoolDefinition?.let { manifest.put("school", it) }
+        source?.let {
+            manifest.put("kind", "extension").put("entry", "index.js")
+                .put("capabilities", JSONArray(PluginManifest.AUTH))
+                .put("files", JSONObject().put("index.js", PluginJson.sha256(it.toByteArray())))
+        }
         val bytes = ByteArrayOutputStream().also { buffer -> ZipOutputStream(buffer).use { zip ->
             val files = linkedMapOf("manifest.json" to manifest)
             if (official) files["signature.json"] = signature(manifest)
             files.forEach { (name, json) -> zip.putNextEntry(ZipEntry(name)); zip.write(json.toString().toByteArray()); zip.closeEntry() }
+            source?.let { zip.putNextEntry(ZipEntry("index.js")); zip.write(it.toByteArray()); zip.closeEntry() }
         } }.toByteArray()
         return store.install(bytes, allowDevelopment = !official).also {
             fixtureIds += id
@@ -155,5 +165,60 @@ abstract class PluginSchoolBindingChecks {
         store.rollback(first.manifest.id); AcademicProviderRegistry.reload()
         assertEquals(first.digest, AcademicProviderRegistry.resolve(school())?.digest)
         assertEquals(second.digest, store.readDigest(second.digest).digest)
+    }
+
+    @Test fun explicitSchoolExtensionReplacesSavedBuiltinWithoutDuplicatingHebicOrLosingCustomSettings() = runBlocking {
+        val manager = UserManager.getInstance()
+        manager.init(context)
+        val previous = SchoolConfig.fromJson(manager.getSchoolById("hebic")!!.toJson())
+        try {
+            val saved = SchoolConfig.fromJson(previous.toJson()).apply {
+                academicSystem = "zf"; basePath = ""; gradesPath = "/custom-grade-query"
+            }
+            manager.updateSchoolConfig(saved)
+            AcademicProviderRegistry.choose(saved, "builtin.zf")
+            val source = """globalThis.plugin={auth:{start:async()=>({ok:true,data:{status:'authenticated',studentId:'synthetic',studentName:'合成'}}),resume:async()=>({ok:false,error:{code:'SESSION_EXPIRED',message:'synthetic'}}),refreshCaptcha:async()=>({ok:false,error:{code:'UNSUPPORTED',message:'synthetic'}}),validate:async()=>({ok:true,data:{status:'authenticated',studentId:'synthetic',studentName:'合成'}})}};"""
+            val pkg = install("cn.edu.hebic.academic-1.2.1", version = "1.2.1", official = false,
+                schoolDefinition = JSONObject().put("id", "hebic-plugin").put("name", "河北传媒学院")
+                    .put("domain", saved.domain).put("protocol", "https").put("basePath", "").put("academicSystem", "zf"), source = source)
+            assertEquals("org.zf.protocol.zf", AcademicProviderRegistry.resolve(saved)?.manifest?.id)
+            AcademicProviderRegistry.setEnabled(pkg.manifest.id, false)
+            AcademicProviderRegistry.setSchoolEnabled(pkg.manifest.id, saved, false)
+            val bound = AcademicProviderRegistry.bindSchool(pkg)
+            assertEquals("hebic", bound.id)
+            assertEquals(saved.domain, bound.domain)
+            assertEquals("/custom-grade-query", bound.gradesPath)
+            assertNull(manager.getSchoolById("hebic-plugin"))
+            assertEquals(pkg.manifest.id, bound.academicProvider)
+            assertEquals(pkg.digest, AcademicProviderRegistry.resolve(bound)?.digest)
+            assertEquals("1.2.1", AcademicProviderRegistry.operationProvider(bound, "auth.start")?.manifest?.version)
+            assertEquals(pkg.digest, AcademicProviderRegistry.authenticationPackage(bound)?.digest)
+            assertEquals("org.zf.protocol.zf", AcademicProviderRegistry.operationProvider(bound, "study.schedule")?.manifest?.id)
+            AcademicProviderRegistry.initialize(context)
+            manager.init(context)
+            val restored = manager.getSchoolById("hebic")!!
+            assertEquals(pkg.digest, AcademicProviderRegistry.resolve(restored)?.digest)
+            verifyExtensionLogin(restored)
+            AcademicProviderRegistry.choose(restored, "builtin.zf")
+            assertEquals("org.zf.protocol.zf", AcademicProviderRegistry.resolve(restored)?.manifest?.id)
+            AcademicProviderRegistry.choose(restored, null)
+            assertEquals("", restored.academicProvider)
+            assertEquals("org.zf.protocol.zf", AcademicProviderRegistry.resolve(restored)?.manifest?.id)
+        } finally {
+            manager.updateSchoolConfig(previous)
+        }
+    }
+
+    @Test fun stalePackageOrUnrelatedAddressCannotChangeASchoolBinding() = runBlocking {
+        val previous = install("test.binding.stale")
+        val current = install(previous.manifest.id, version = "1.2.1")
+        val target = school("/elsewhere")
+        AcademicProviderRegistry.choose(target, "builtin.zf")
+        try { AcademicProviderRegistry.bindSchool(previous, target); fail("A stale package was bound") }
+        catch (error: PluginException) { assertEquals(PluginErrorCode.CONFLICT, error.code) }
+        try { AcademicProviderRegistry.bindSchool(current, target); fail("An unrelated endpoint was replaced") }
+        catch (error: IllegalArgumentException) { assertTrue(error.message.orEmpty().contains("学校地址")) }
+        assertEquals("builtin.zf", AcademicProviderRegistry.manualChoice(target))
+        assertNull(UserManager.getInstance().getSchoolById(target.id))
     }
 }

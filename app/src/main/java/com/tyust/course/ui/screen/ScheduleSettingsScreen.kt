@@ -11,13 +11,16 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.outlined.AccessTime
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -92,8 +95,12 @@ fun ScheduleSettingsScreen(
     onShowDatePicker: (() -> Unit)? = null,
     semesterStartOverride: Long? = null,
     onSemesterStartChange: ((Long) -> Unit)? = null,
+    weekStart: com.tyust.course.schedule.ScheduleWeekStart = com.tyust.course.schedule.ScheduleWeekStart.Default,
+    onWeekStartChange: ((com.tyust.course.schedule.ScheduleWeekStart) -> Unit)? = null,
     onPeriodTimesChange: ((List<PeriodTime>) -> Unit)? = null,
     periodTimesOverride: List<PeriodTime>? = null,
+    presetAccountKey: String = com.tyust.course.manager.UserManager.getInstance().currentAccountStorageKey.ifBlank { "default" },
+    onApplyTimePreset: ((com.tyust.course.schedule.ScheduleTiming) -> Boolean)? = null,
     customCourses: List<ScheduleSettingsManager.CustomCourse> = emptyList(),
     onAddCustomCourse: (() -> Unit)? = null,
     onEditCustomCourse: (String) -> Unit = {},
@@ -105,18 +112,27 @@ fun ScheduleSettingsScreen(
     reminderSummary: com.tyust.course.schedule.SemesterReminderSummary? = null,
     canChangeReminders: Boolean = false,
     onSemesterReminders: (Boolean) -> Unit = {},
-    defaultLead: Int = 15, onDefaultLead: ((Int) -> Unit)? = null, onAdjustments: (() -> Unit)? = null
+    defaultLead: Int = 15, onDefaultLead: ((Int) -> Unit)? = null, onAdjustments: (() -> Unit)? = null,
+    studyBlocks: List<com.tyust.course.schedule.ScheduleStudyBlock> = emptyList(),
+    onStudyBlockChange: ((com.tyust.course.schedule.ScheduleStudyBlock) -> Unit)? = null
 ) {
     val context = androidx.compose.ui.platform.LocalContext.current
+    val presetStore = remember(context) { com.tyust.course.schedule.ScheduleTimePresetStore(
+        context.getSharedPreferences("schedule_time_presets", android.content.Context.MODE_PRIVATE)) }
     var periodCount by remember { mutableStateOf(manager.periodCount) }
     LaunchedEffect(manager.revision) { periodCount = manager.periodCount }
     var storedPeriodTimes by remember { mutableStateOf(periodTimesOverride ?: manager.getPeriodTimes()) }
     var semesterStartDate by remember { mutableStateOf(semesterStartOverride ?: manager.semesterStartDate) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var showWeekStartPicker by remember { mutableStateOf(false) }
     var showLeadPicker by remember { mutableStateOf(false) }
     if (showLeadPicker) ReminderLeadPicker(defaultLead, onDismiss = { showLeadPicker = false }, onSave = { it?.let { minutes -> onDefaultLead?.invoke(minutes) } })
     var showPeriodCountPicker by remember { mutableStateOf(false) }
     var editingPeriod by remember { mutableStateOf<PeriodTime?>(null) }
+    var editingStudy by remember { mutableStateOf<com.tyust.course.schedule.ScheduleStudyBlock?>(null) }
+    editingStudy?.let { block ->
+        ScheduleStudySheet(block, onDismiss = { editingStudy = null }, onSave = { onStudyBlockChange?.invoke(it) })
+    }
 
     val dateFormat = remember { SimpleDateFormat("yyyy年M月d日", Locale.CHINA) }
     val dateText = if (semesterStartDate > 0) dateFormat.format(Date(semesterStartDate)) else "未设置"
@@ -125,7 +141,9 @@ fun ScheduleSettingsScreen(
     LaunchedEffect(manager.semesterStartDate, semesterStartOverride) {
         semesterStartDate = semesterStartOverride ?: manager.semesterStartDate
     }
-    LaunchedEffect(periodTimesOverride) { periodTimesOverride?.let { storedPeriodTimes = it } }
+    LaunchedEffect(manager.revision, periodTimesOverride, presetAccountKey) {
+        storedPeriodTimes = periodTimesOverride ?: manager.getPeriodTimes(presetAccountKey)
+    }
 
     // getPeriodTimes() 返回存档或 12 条默认值，与 periodCount 无关——所以选了
     // 16 节之后列表仍然只有 12 行，而课表已经画 16 行。这里按 periodCount 裁剪/补齐。
@@ -223,11 +241,40 @@ fun ScheduleSettingsScreen(
                                     if (displayPreferences.showWeekend) 0 else 1,
                                     { onDisplayPreferences(displayPreferences.copy(showWeekend = it == 0)) }, Modifier.width(104.dp))
                             })
+                            InsetGroupedRow(title = "日视图滑动", subtitle = if (displayPreferences.stripSwipesWeeks) "日期条左右滑动切换周数" else "日期条左右滑动切换日期", trailing = {
+                                com.tyust.course.ui.system.SystemPicker(listOf("按天", "按周"),
+                                    if (displayPreferences.stripSwipesWeeks) 1 else 0,
+                                    { onDisplayPreferences(displayPreferences.copy(stripSwipesWeeks = it == 1)) }, Modifier.width(104.dp))
+                            })
                             InsetGroupedRow(title = "显示密度", subtitle = "名称和地点仍可完整查看", showDivider = false, trailing = {
                                 com.tyust.course.ui.system.SystemPicker(listOf("标准", "紧凑"),
                                     if (displayPreferences.compact) 1 else 0,
                                     { onDisplayPreferences(displayPreferences.copy(compact = it == 1)) }, Modifier.width(104.dp))
                             })
+                        }
+                    }
+                    if (onStudyBlockChange != null) {
+                        val studyRows = com.tyust.course.schedule.ScheduleStudyKind.entries.map { kind ->
+                            studyBlocks.firstOrNull { it.kind == kind }
+                                ?: com.tyust.course.schedule.ScheduleStudyBlock.default(kind)
+                        }
+                        InsetGroupedSection(header = "自习时间") {
+                            studyRows.forEachIndexed { index, block ->
+                                InsetGroupedRow(
+                                    title = block.name,
+                                    subtitle = (if (block.enabled) "已开启 · " else "未开启 · ") + studyBlockSummary(block),
+                                    showDivider = index != studyRows.lastIndex,
+                                    trailing = {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    },
+                                    onClick = { editingStudy = block }
+                                )
+                            }
                         }
                     }
                     InsetGroupedSection(header = "桌面组件") {
@@ -256,13 +303,35 @@ fun ScheduleSettingsScreen(
                             }
                         }
                     }
+                    ScheduleTimePresetsSection(presetStore, presetAccountKey, reminderTerm,
+                        com.tyust.course.schedule.ScheduleTiming.from(periodCount, periodTimes),
+                        canApply = onApplyTimePreset != null) { timing ->
+                        val applied = onApplyTimePreset?.invoke(timing) ?: false
+                        if (applied) { periodCount = timing.count; storedPeriodTimes = timing.times }
+                        applied
+                    }
                     StaggerIn(index = 0, settled = entranceSettled) {
                         InsetGroupedSection(header = "基础设置") {
                             InsetGroupedRow(
                                 icon = Icons.Filled.DateRange,
                                 iconTint = Color(0xFF0A84FF),
+                                title = "每周第一天",
+                                subtitle = "学周从这一天开始，课表列序随之调整",
+                                trailing = {
+                                    Text(
+                                        text = if (weekStart == com.tyust.course.schedule.ScheduleWeekStart.Sunday) "周日" else "周一",
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.Medium,
+                                        color = NeuPrimary
+                                    )
+                                },
+                                onClick = { showWeekStartPicker = true }
+                            )
+                            InsetGroupedRow(
+                                icon = Icons.Filled.DateRange,
+                                iconTint = Color(0xFF0A84FF),
                                 title = "第一周开始日期",
-                                subtitle = "按所选日期所在周的周一计算周次",
+                                subtitle = "按所选日期所在周的第一天计算周次",
                                 trailing = {
                                     Text(
                                         text = dateText,
@@ -351,12 +420,27 @@ fun ScheduleSettingsScreen(
                         System.currentTimeMillis()
                     },
                     onConfirm = { millis ->
-                        val monday = com.tyust.course.schedule.ScheduleDates.mondayOfWeek(millis).timeInMillis
-                        if (onSemesterStartChange != null) onSemesterStartChange(monday) else manager.semesterStartDate = monday
-                        semesterStartDate = monday
+                        val start = com.tyust.course.schedule.ScheduleDates.startOfWeek(millis, weekStart).timeInMillis
+                        if (onSemesterStartChange != null) onSemesterStartChange(start) else manager.semesterStartDate = start
+                        semesterStartDate = start
                         showDatePicker = false
                     },
                     onDismiss = { showDatePicker = false }
+                )
+            }
+
+            if (showWeekStartPicker) {
+                GlassOptionWheelDialog(
+                    title = "每周第一天",
+                    options = listOf("周一", "周日"),
+                    selectedIndex = if (weekStart == com.tyust.course.schedule.ScheduleWeekStart.Sunday) 1 else 0,
+                    onConfirm = { index ->
+                        val chosen = if (index == 1) com.tyust.course.schedule.ScheduleWeekStart.Sunday
+                            else com.tyust.course.schedule.ScheduleWeekStart.Monday
+                        if (onWeekStartChange != null) onWeekStartChange(chosen) else manager.weekStart = chosen
+                        showWeekStartPicker = false
+                    },
+                    onDismiss = { showWeekStartPicker = false }
                 )
             }
 

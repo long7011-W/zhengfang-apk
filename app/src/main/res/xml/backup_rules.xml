@@ -4,4 +4,5 @@
     <include domain="sharedpref" path="."/>
     <include domain="database" path="."/>
     <exclude domain="sharedpref" path="native-plugin-permissions.xml"/>
+    <exclude domain="sharedpref" path="class_quiet_runtime.xml"/>
 </full-backup-content>

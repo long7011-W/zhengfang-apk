@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.tyust.course.schedule.*
 import com.tyust.course.ui.system.*
+import java.util.Calendar
 
 @Composable
 internal fun ScheduleNotice(message: String, action: String? = null, onAction: () -> Unit = {}) {
@@ -46,31 +47,48 @@ internal fun ScheduleDayList(
     times: List<PeriodTimeUi>, compact: Boolean, scrollState: ScrollState, topInset: Dp,
     onCourseClick: (ScheduleCourseUi) -> Unit,
     onCourseLongClick: (ScheduleCourseUi) -> Unit = {},
-    agenda: ScheduleAgenda, now: Long, isToday: Boolean, onCalendar: () -> Unit
+    agenda: ScheduleAgenda, now: Long, isToday: Boolean, onCalendar: () -> Unit,
+    studySlots: List<ScheduleStudySlot> = emptyList(),
+    onStudyClick: (ScheduleStudyKind) -> Unit = {}
 ) {
     val daily = remember(courses, week, day) { courses.filter { it.day == day && isInWeek(it.weeks, week) }
         .sortedWith(compareBy<ScheduleCourseUi> { it.startPeriod }.thenBy { it.name }) }
     val unknown = daily.count { !ScheduleWeeks.parse(it.weeks).valid }
+    val timeline = remember(daily, studySlots, times) {
+        (daily.map { DayEntry.Course(courseStartMinutes(it, times), it) } +
+            studySlots.map { DayEntry.Study(it.startMinutes, it) }).sortedBy { it.start }
+    }
     Column(Modifier.fillMaxSize().testTag("schedule-day-list").verticalScroll(scrollState, overscrollEffect = null)
         .padding(start = 16.dp, end = 16.dp, top = topInset + 12.dp, bottom = LocalAppOverlayBottomInset.current + 24.dp),
         verticalArrangement = Arrangement.spacedBy(if (compact) 8.dp else 12.dp)) {
         when {
-            ScheduleDates.firstMonday(firstWeekDate) == null ->
+            ScheduleDates.firstWeekDate(firstWeekDate) == null ->
                 ScheduleNotice("设置开学日期后显示当天课程", "设置开学日期", onCalendar)
             week !in 1..ScheduleMaxWeeks -> ScheduleNotice(if (week < 1) "尚未开学，当天没有课程" else "本学期已结束")
             else -> {
+                val nowMinutes = remember(now) { Calendar.getInstance().apply { timeInMillis = now }
+                    .let { it.get(Calendar.HOUR_OF_DAY) * 60 + it.get(Calendar.MINUTE) } }
+                // 自习也算一节：总数与「还剩」都把它并进来。
+                val total = daily.size + studySlots.size
+                val remaining = agenda.remaining(now) + studySlots.count { it.endMinutes > nowMinutes }
                 val summary = if (isToday) {
-                    "今日 ${daily.size} 堂" + when {
+                    "今日 $total 堂" + when {
                         unknown > 0 -> " · $unknown 堂周次待核对"
-                        daily.isNotEmpty() && agenda.remaining(now) == 0 -> " · 已结束"
-                        else -> " · 还剩 ${agenda.remaining(now)} 堂"
+                        total > 0 && remaining == 0 -> " · 已结束"
+                        else -> " · 还剩 $remaining 堂"
                     }
-                } else "当日 ${daily.size} 堂" + if (unknown > 0) " · $unknown 堂周次待核对" else ""
+                } else "当日 $total 堂" + if (unknown > 0) " · $unknown 堂周次待核对" else ""
                 AnimatedNumberText(summary, Modifier.testTag("schedule-day-summary").padding(start = 4.dp, bottom = 2.dp),
                     style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (daily.isEmpty()) ScheduleNotice(if (isToday) "今天没有课程" else "当天没有课程")
-                daily.forEach { course -> key(course.id) {
-                    ScheduleDayCourse(course, times, compact, { onCourseClick(course) }, { onCourseLongClick(course) })
+                if (timeline.isEmpty()) ScheduleNotice(if (isToday) "今天没有课程" else "当天没有课程")
+                timeline.forEach { entry -> when (entry) {
+                    is DayEntry.Course -> key(entry.course.id) {
+                        ScheduleDayCourse(entry.course, times, compact,
+                            { onCourseClick(entry.course) }, { onCourseLongClick(entry.course) })
+                    }
+                    is DayEntry.Study -> key("study:${entry.slot.kind.storageKey}") {
+                        ScheduleDayStudy(entry.slot, compact) { onStudyClick(entry.slot.kind) }
+                    }
                 } }
             }
         }
@@ -137,3 +155,16 @@ internal fun ScheduleDayCourse(course: ScheduleCourseUi, times: List<PeriodTimeU
         }
     }
 }
+
+/** 日视图时间线上的一项：课程或自习。 */
+private sealed interface DayEntry {
+    val start: Int
+
+    data class Course(override val start: Int, val course: ScheduleCourseUi) : DayEntry
+    data class Study(override val start: Int, val slot: ScheduleStudySlot) : DayEntry
+}
+
+/** 课程的开始分钟；查不到节次时间时排到最后。 */
+private fun courseStartMinutes(course: ScheduleCourseUi, times: List<PeriodTimeUi>): Int =
+    times.firstOrNull { it.period == course.startPeriod }?.startTime
+        ?.let { ScheduleStudyBlock.minutesOf(it) } ?: Int.MAX_VALUE

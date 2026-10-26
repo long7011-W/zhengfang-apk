@@ -65,6 +65,7 @@ internal object PluginEmbeddedBrowser {
         val operations = java.util.concurrent.ConcurrentHashMap<String, PluginOperation>()
         val documents = java.util.concurrent.ConcurrentHashMap<String, JSONObject>()
         val nativePrompts = java.util.concurrent.ConcurrentHashMap<String, JSONObject>()
+        val nativePromptSources = java.util.concurrent.ConcurrentHashMap<String, String>()
         val openedPages = java.util.concurrent.ConcurrentHashMap<String, String>()
         val lease = PluginVersionLeases.acquire(owner.pkg.manifest.id)
         val vault = NativePluginVault(owner.app, owner.namespace, guard = owner::check)
@@ -222,17 +223,19 @@ internal object PluginEmbeddedBrowser {
         return status.put("status", if (saved?.optString("status") in setOf("loading", "entry", "ready", "running", "needs_input", "unavailable", "error")) "interrupted" else saved?.optString("status") ?: "idle")
             .put("lastUrl", saved?.optString("url").orEmpty()).put("message", saved?.optString("message").orEmpty()).put("engine", "GeckoView 157")
     }
-    suspend fun startScript(app: Context, pkg: PluginPackage, owner: AcademicSession, id: String, url: String): JSONObject {
+    internal suspend fun startScript(app: Context, pkg: PluginPackage, owner: AcademicSession, id: String, url: String, automation: NativeForegroundScriptGrant? = null): JSONObject {
         val store = PluginUserscripts.store(app, pkg, owner, id)
         if (!store.policy.executes(url)) throw PluginException(PluginErrorCode.UNTRUSTED_URL, "脚本未声明此课程页面")
         val c = connect(app, pkg, owner)
         return c.scriptLock.withLock {
         c.check()
+        automation?.requireStart(id, url, c.script?.takeUnless { it.closed }?.describe(JSONObject()))
         stopScriptLocked(c, "stopped")
         if (!store.metadata().optBoolean("subscribed") || System.currentTimeMillis() - store.metadata().optLong("checkedAt") > 86_400_000) store.update(true)
         val (selected, source) = store.activate()
         val live = Script(c, "g" + UUID.randomUUID().toString().replace("-", ""), PluginUserscripts.store(app, pkg, c.session, id), selected, url)
         c.script = live
+        automation?.remember(live.handle, url)
         try {
             withContext(Dispatchers.Main) { PluginForegroundWork.add(app, live.handle, PluginForegroundWork.Entry(pkg.manifest.id, store.policy.declaration.getString("title")) { reason -> scope.launch { stopScript(c, reason) } }) }
             val metadata = UserscriptMetadata.parse(source)
@@ -251,12 +254,21 @@ internal object PluginEmbeddedBrowser {
         } catch (e: Throwable) { withContext(NonCancellable) { stopScriptLocked(c, "failed") }; throw e }
         }
     }
-    suspend fun controlScript(app: Context, pkg: PluginPackage, owner: AcademicSession, input: JSONObject): JSONObject {
+    internal suspend fun configureScriptForQueue(app: Context, pkg: PluginPackage, owner: AcademicSession, input: JSONObject, vault: NativePluginVault, automation: NativeForegroundScriptGrant): JSONObject {
+        val c = connect(app, pkg, owner)
+        return c.scriptLock.withLock {
+            c.check()
+            automation.requireConfiguration(input, c.script?.takeUnless { it.closed }?.describe(JSONObject()))
+            PluginUserscripts.configure(app, pkg, owner, input, vault)
+        }
+    }
+    internal suspend fun controlScript(app: Context, pkg: PluginPackage, owner: AcademicSession, input: JSONObject, automation: NativeForegroundScriptGrant? = null): JSONObject {
         val c = connection?.takeIf { it.namespace == PluginStorageScope.session(owner, pkg.manifest.id, !pkg.official) } ?: throw PluginException(PluginErrorCode.NOT_OPEN, "脚本已停止，请重新核对课程")
         c.check()
         val live = c.script?.takeIf { !it.closed && it.handle == input.getString("handle") } ?: throw PluginException(PluginErrorCode.NOT_OPEN, "脚本句柄已失效")
+        automation?.requireControl(input, live.describe(JSONObject()))
         when (input.getString("action")) {
-            "stop" -> stopScript(c, "stopped")
+            "stop" -> stopScript(c, "stopped", expected = live)
             "open" -> show(app, rpc(c, "script.page", JSONObject().put("handle", live.handle)).getString("handle"))
             "settings" -> PluginUserscripts.configure(app, pkg, owner, JSONObject().put("scriptId", live.policy.id).put("values", input.optJSONObject("values") ?: JSONObject()))
             "start" -> {
@@ -268,12 +280,29 @@ internal object PluginEmbeddedBrowser {
         }
         return live.describe(live.store.publicStatus())
     }
-    suspend fun interactScript(app: Context, pkg: PluginPackage, owner: AcademicSession, input: JSONObject, command: Boolean): JSONObject = withContext(Dispatchers.Main) {
+    internal suspend fun interactScript(app: Context, pkg: PluginPackage, owner: AcademicSession, input: JSONObject, command: Boolean, credentialVault: NativePluginVault, automation: NativeForegroundScriptGrant? = null): JSONObject = withContext(Dispatchers.Main) {
         val c = connection?.takeIf { it.valid() && it.namespace == PluginStorageScope.session(owner, pkg.manifest.id, !pkg.official) }
             ?: throw PluginException(PluginErrorCode.NOT_OPEN, "任务已停止，请重新开始")
         val live = c.script?.takeIf { !it.closed && it.handle == input.getString("handle") }
             ?: throw PluginException(PluginErrorCode.STALE_CONTEXT, "任务已变化")
         val adapter = live.policy.declaration.getJSONObject("adapter")
+        val automatedInput = JSONObject(input.toString())
+        if (automation != null) {
+            val href: String
+            if (!command && input.optString("interactionId").startsWith("native:")) {
+                href = live.nativePromptSources[input.getString("interactionId")].orEmpty()
+            } else {
+                val target = live.documents.toSortedMap().entries.firstOrNull { (_, document) ->
+                    automation.allowsDocument(live.handle, document.optString("href")) &&
+                        (if (command) PluginJson.objects(document.optJSONArray("actions") ?: JSONArray()).any { it.optString("id") == input.optString("actionId") }
+                         else document.optJSONObject("interaction")?.optString("id") == input.optString("interactionId"))
+                } ?: throw PluginException(PluginErrorCode.PERMISSION_DENIED, "操作页面已离开本次作业范围")
+                href = target.value.optString("href")
+                automatedInput.put("documentId", target.key)
+            }
+            if (!automation.allowsDocument(live.handle, href)) throw PluginException(PluginErrorCode.PERMISSION_DENIED, "提示来源不属于本次作业")
+            automation.requireInteraction(input, live.describe(JSONObject()).put("lastUrl", href), command)
+        }
         if (!command && input.getString("interactionId").startsWith("native:")) {
             val id = input.getString("interactionId")
             val prompt = live.nativePrompts[id] ?: throw PluginException(PluginErrorCode.STALE_CONTEXT, "提示已关闭或更新")
@@ -282,14 +311,13 @@ internal object PluginEmbeddedBrowser {
             val request = JSONObject().put("handle", live.handle).put("interactionId", id).put("actionId", action)
             if (prompt.optString("kind") == "input" && action == "confirm") {
                 val credential = input.optJSONObject("credential") ?: throw PluginException(PluginErrorCode.VALIDATION_FAILED, "请填写提示所需内容")
-                val value = withContext(Dispatchers.IO) { live.vault.get("credential:" + credential.getString("handle"))?.optString(credential.getString("field")) }
-                    ?: throw PluginException(PluginErrorCode.STALE_CONTEXT, "输入凭据已失效")
-                if (value.length > 4096) throw PluginException(PluginErrorCode.VALIDATION_FAILED, "输入内容过长")
+                val value = withContext(Dispatchers.IO) { credentialVault.credentialField(credential) }
                 request.put("text", value)
             } else if (input.has("credential")) throw PluginException(PluginErrorCode.PERMISSION_DENIED, "此提示不接收输入")
             val result = rpc(c, "script.interact", request)
             if (!result.optBoolean("accepted")) throw PluginException(PluginErrorCode.STALE_CONTEXT, "提示操作未确认")
             live.nativePrompts.remove(id)
+            live.nativePromptSources.remove(id)
             live.preparationAt = SystemClock.elapsedRealtime()
             live.updateDocuments()
             advanceStart(c, live); watchPreparation(c, live)
@@ -303,7 +331,7 @@ internal object PluginEmbeddedBrowser {
         }
         val action = PluginJson.objects(actions ?: JSONArray()).firstOrNull { it.optString("id") == input.getString("actionId") }
             ?: throw PluginException(PluginErrorCode.PERMISSION_DENIED, "任务没有声明此操作")
-        val result = rpc(c, if (command) "script.action" else "script.interact", input)
+        val result = rpc(c, if (command) "script.action" else "script.interact", automatedInput)
         if (!result.optBoolean("accepted")) throw PluginException(PluginErrorCode.STALE_CONTEXT, "操作未确认，请刷新任务状态")
         if (!live.closed) {
             live.startRequested = action.optBoolean("resumeTask")
@@ -418,9 +446,10 @@ internal object PluginEmbeddedBrowser {
                     throw PluginException(PluginErrorCode.PERMISSION_DENIED, "未声明原生脚本提示")
                 val id = event.getString("interactionId")
                 if (!id.matches(Regex("native:[a-f0-9-]{36}"))) throw PluginException(PluginErrorCode.VALIDATION_FAILED, "提示标识无效")
-                if (event.getString("kind") == "browser-prompt-closed") live.nativePrompts.remove(id)
+                if (event.getString("kind") == "browser-prompt-closed") { live.nativePrompts.remove(id); live.nativePromptSources.remove(id) }
                 else {
                     if (live.nativePrompts.size >= 8) throw PluginException(PluginErrorCode.RESOURCE_LIMIT, "待处理提示过多")
+                    live.nativePromptSources[id] = href
                     live.nativePrompts[id] = JSONObject().put("id", id).put("kind", if (event.optString("promptKind") == "input") "input" else "notice")
                         .put("title", live.store.redact(event.optString("title")).ifBlank { "任务提示" }.take(160))
                         .put("message", live.store.redact(event.optString("message")).take(6000))
@@ -431,12 +460,12 @@ internal object PluginEmbeddedBrowser {
             }
             "hello" -> {
                 if (live.documents.isEmpty() || live.status == "unavailable") live.preparationAt = SystemClock.elapsedRealtime()
-                live.documents.putIfAbsent(event.getString("documentId"), JSONObject()); live.updateDocuments()
+                live.documents.putIfAbsent(event.getString("documentId"), JSONObject().put("href", href)); live.updateDocuments()
                 if (live.lastUrl.isEmpty()) live.lastUrl = href
             }
             "storage" -> live.store.putSetting(event.getString("key"), event.get("value"))
             "status" -> {
-                live.documents[event.getString("documentId")] = JSONObject().put("stage", event.optString("stage"))
+                live.documents[event.getString("documentId")] = JSONObject().put("href", href).put("stage", event.optString("stage"))
                     .put("available", event.optBoolean("available")).put("running", event.optBoolean("running"))
                     .put("settings", event.optJSONObject("settings") ?: JSONObject()).put("logs", live.store.redact(event.optString("logs")).takeLast(12000))
                     .apply {

@@ -47,11 +47,17 @@ def publish_metadata(client, envelope, budget, announcement=None, signed_only=Fa
     verified = None
     with tempfile.TemporaryDirectory() as d:
         for candidate in candidates:
-            try:
-                fetch(candidate['url'], Path(d)/'apk', budget, expected=p)
-                verified = candidate; break
-            except DeliveryError:
-                continue
+            for attempt in range(2):
+                try:
+                    # Retry one stalled edge download, with the same signed size/hash
+                    # and shared deadline. Revalidate the cache on the second read.
+                    fetch(candidate['url'], Path(d)/'apk', budget, expected=p, revalidate=attempt > 0)
+                    verified = candidate
+                    break
+                except DeliveryError:
+                    continue
+            if verified is not None:
+                break
     if verified is None:
         raise DeliveryError('No verified domestic candidate; legacy metadata retained')
     if signed_only:

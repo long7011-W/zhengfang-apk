@@ -40,25 +40,10 @@ internal object PluginUserscripts {
             !session.retired && PluginServiceAccounts(app).current(pkg, session) && AcademicProviderRegistry.isCurrentPackage(pkg.manifest.id, pkg.digest) && AcademicProviderRegistry.isEnabled(pkg.manifest.id)
         }
     }
-    suspend fun configure(app: Context, pkg: PluginPackage, owner: AcademicSession, input: JSONObject): JSONObject {
+    suspend fun configure(app: Context, pkg: PluginPackage, owner: AcademicSession, input: JSONObject, credentialVault: NativePluginVault? = null): JSONObject {
         val store = store(app, pkg, owner, input.getString("scriptId"))
         withContext(Dispatchers.IO) {
-            val declared = PluginJson.objects(store.policy.declaration.getJSONObject("adapter").getJSONArray("settings")).associateBy { it.getString("key") }
-            val values = input.optJSONObject("values") ?: JSONObject()
-            val normalized = values.keys().asSequence().associateWith { key ->
-                val setting = declared[key] ?: throw PluginException(PluginErrorCode.VALIDATION_FAILED, "没有这个原脚本设置")
-                PluginUserscriptStore.normalizedSetting(setting, values.get(key)) ?: throw PluginException(PluginErrorCode.VALIDATION_FAILED, "脚本设置超出范围")
-            }
-            val credential = input.optJSONObject("credential")
-            val secret = credential?.let {
-                if (it.getString("key") !in PluginJson.strings(store.policy.declaration.optJSONArray("sensitiveKeys"))) throw PluginException(PluginErrorCode.PERMISSION_DENIED, "未声明这个敏感 GM 键")
-                val vault = NativePluginVault(app, PluginStorageScope.session(owner, pkg.manifest.id, !pkg.official))
-                val value = vault.get("credential:" + it.getString("handle"))?.optString(it.getString("field"))
-                if (value.isNullOrBlank() || value.length > 4096) throw PluginException(PluginErrorCode.VALIDATION_FAILED, "凭据已失效或内容无效，请重新输入")
-                value
-            }
-            normalized.forEach { (key, value) -> store.putSetting(key, value) }
-            if (credential != null && secret != null) store.putSetting(credential.getString("key"), secret)
+            store.configure(input, credentialVault)
         }
         PluginEmbeddedBrowser.refreshScriptSettings(app, pkg, owner, store, credentialChanged = input.has("credential"))
         return store.publicStatus()

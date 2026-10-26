@@ -54,4 +54,16 @@ class PluginUpdatePolicyTest {
         assertNull(PluginVersionLeases.whenIdle("lease.test") { "switched" })
         second.close(); assertEquals("switched", PluginVersionLeases.whenIdle("lease.test") { "switched" })
     }
+    @Test fun newOrChangedAutomaticScriptScopeNeedsUpdateApproval() {
+        val previous = manifest("demo.provider")
+        val next = PluginManifest(JSONObject(previous.json.toString()).put("contributes", JSONObject().put("tasks", JSONArray()
+            .put(JSONObject().put("id", "queue").put("foreground", JSONObject().put("script", JSONObject().put("id", "original")))))))
+        assertEquals(listOf("自动脚本操作"), PluginUpdatePolicy.expanded(previous, next))
+        assertTrue(PluginUpdatePolicy.expanded(next, next).isEmpty())
+        assertTrue(PluginUpdatePolicy.expanded(next, previous).isEmpty())
+        val changed = PluginManifest(JSONObject(next.json.toString()).apply {
+            getJSONObject("contributes").getJSONArray("tasks").getJSONObject(0).getJSONObject("foreground").getJSONObject("script").put("actions", JSONArray().put("submit"))
+        })
+        assertEquals(listOf("自动脚本操作"), PluginUpdatePolicy.expanded(next, changed))
+    }
 }

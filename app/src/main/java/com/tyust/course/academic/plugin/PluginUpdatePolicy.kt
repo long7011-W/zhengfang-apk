@@ -42,6 +42,8 @@ object PluginUpdatePolicy {
         if (next.network.any { PluginJson.canonical(it) !in oldRules }) added += "网络范围"
         val oldServers = previous.json.optJSONArray("servers")?.let(PluginJson::objects).orEmpty().associate { it.getString("id") to it.getString("origin") }
         if (next.json.optJSONArray("servers")?.let(PluginJson::objects).orEmpty().any { oldServers[it.getString("id")] != it.getString("origin") }) added += "服务来源"
+        val previousQueues = PluginJson.objects(previous.json.optJSONObject("contributes")?.optJSONArray("tasks") ?: JSONArray()).mapNotNull { task -> task.optJSONObject("foreground")?.optJSONObject("script")?.let { task.getString("id") to PluginJson.canonical(it) } }.toMap()
+        if (PluginJson.objects(next.json.optJSONObject("contributes")?.optJSONArray("tasks") ?: JSONArray()).any { task -> task.optJSONObject("foreground")?.optJSONObject("script")?.let { previousQueues[task.getString("id")] != PluginJson.canonical(it) } == true }) added += "自动脚本操作"
         return added.distinct()
     }
 }

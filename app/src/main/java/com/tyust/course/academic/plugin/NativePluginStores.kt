@@ -161,6 +161,12 @@ class NativePluginVault(app: Context, namespace: String, private val legacyNames
         val handle = get(reference)?.optString("handle")?.takeIf { it.isNotBlank() } ?: return@synchronized null
         if (get("credential:$handle") != null) handle else { remove(reference); null }
     }
+    internal fun credentialField(reference: JSONObject): String {
+        val value = get("credential:" + reference.getString("handle"))?.opt(reference.getString("field")) as? String
+            ?: throw PluginException(PluginErrorCode.SESSION_EXPIRED, "输入凭据已失效，请重新输入")
+        if (value.length > 4096) throw PluginException(PluginErrorCode.VALIDATION_FAILED, "输入内容过长")
+        return value
+    }
     fun saveCredential(name: String, values: JSONObject, remember: Boolean): String = synchronized(vaultLock) {
         val old = get("credential-key:$name")?.optString("handle")
         if (!old.isNullOrBlank()) remove("credential:$old")

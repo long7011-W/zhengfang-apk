@@ -4,6 +4,16 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class PluginBrowserNavigationTest {
+    @Test fun localQuestionDocumentRequiresARunningScriptAndExactSrcdocUrl() {
+        assertTrue(PluginBrowserNavigation.allowsLocalSubframe("about:srcdoc", true))
+        assertFalse(PluginBrowserNavigation.allowsLocalSubframe("about:srcdoc", false))
+        for (url in listOf("about:srcdoc?x=1", "about:srcdoc#x", "about:config", "about:reader", "data:text/html,test", "javascript:alert(1)", "https://other.test/")) {
+            assertFalse(url, PluginBrowserNavigation.allowsLocalSubframe(url, true))
+            assertFalse(url, PluginBrowserNavigation.allowsLocalSubframe(url, false))
+        }
+        assertTrue(PluginBrowserNavigation.allowsLocalSubframe("about:blank", false))
+    }
+
     private fun upgrade(url: String) = PluginBrowserNavigation.httpsEquivalent(url) { it.startsWith("https://course.test/course/") }
 
     @Test fun upstreamProbeFallbackKeepsTheOriginalPathAndQueryOnHttps() {

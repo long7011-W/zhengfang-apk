@@ -1,131 +1,71 @@
 package com.tyust.course.announcement
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Campaign
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
+import androidx.compose.material.icons.outlined.Campaign
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import coil.compose.AsyncImage
 import com.halilibo.richtext.markdown.Markdown
 import com.halilibo.richtext.ui.material3.Material3RichText
-import com.tyust.course.ui.system.LiquidButton
-import com.tyust.course.ui.system.LiquidButtonStyle
+import com.tyust.course.ui.system.GlassToaster
 import com.tyust.course.ui.system.SystemDialog
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.tyust.course.ui.system.SystemDialogButton
 
-/**
- * 公告弹窗（玻璃 SystemDialog 版），按公告类型着色。
- */
+@Composable
+internal fun AnnouncementContent(announcement: AnnouncementManager.Announcement) {
+    val uriHandler = LocalUriHandler.current
+    if (announcement.coverUrl.isNotBlank()) AsyncImage(
+        model = announcement.coverUrl, contentDescription = "公告封面",
+        contentScale = ContentScale.Crop,
+        modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp).clip(RoundedCornerShape(16.dp))
+    )
+    if (announcement.summary.isNotBlank()) Text(announcement.summary,
+        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    if (announcement.contentType == "markdown") {
+        val safeContent = remember(announcement.content) { safeAnnouncementMarkdown(announcement.content) }
+        Material3RichText(Modifier.fillMaxWidth()) {
+            Markdown(safeContent, onLinkClicked = { url ->
+                if (AnnouncementManager.validPublicUrl(url)) runCatching { uriHandler.openUri(url) }
+                    .onFailure { GlassToaster.show("无法打开此链接") }
+                else GlassToaster.show("此链接暂不支持打开")
+            })
+        }
+    } else Text(announcement.content, style = MaterialTheme.typography.bodyLarge)
+}
+
+@Composable
+internal fun AnnouncementActions(announcement: AnnouncementManager.Announcement, onAction: (AnnouncementManager.Action) -> Unit) {
+    announcement.actions.forEachIndexed { index, action ->
+        SystemDialogButton(onClick = { onAction(action) }, primary = index == 0, modifier = Modifier.fillMaxWidth()) { Text(action.label) }
+    }
+}
+
 @Composable
 fun AnnouncementDialog(
     announcement: AnnouncementManager.Announcement,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onAction: (AnnouncementManager.Action) -> Unit = {},
+    onOpenCenter: (() -> Unit)? = null,
+    ownerKey: String? = null
 ) {
-    // 根据类型选择颜色和图标
-    val (primaryColor, secondaryColor, icon) = when (announcement.type) {
-        "warning" -> Triple(Color(0xFFFF9800), Color(0xFFFFF3E0), Icons.Default.Warning)
-        "important" -> Triple(Color(0xFFF44336), Color(0xFFFFEBEE), Icons.Default.Campaign)
-        else -> Triple(Color(0xFF2196F3), Color(0xFFE3F2FD), Icons.Default.Info)
-    }
-
-    SystemDialog(
-        onDismissRequest = onDismiss,
-        icon = {
-            Surface(
-                shape = CircleShape,
-                color = secondaryColor,
-                shadowElevation = 4.dp,
-                modifier = Modifier.size(72.dp)
-            ) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        modifier = Modifier.size(36.dp),
-                        tint = primaryColor
-                    )
-                }
-            }
-        },
-        title = {
-            Text(
-                text = announcement.title,
-                fontSize = 22.sp,
-                fontWeight = FontWeight.Black,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Center,
-                letterSpacing = 0.5.sp
-            )
-        },
-        confirmButton = {
-            LiquidButton(
-                onClick = onDismiss,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
-                style = LiquidButtonStyle.SolidTinted,
-                tint = primaryColor,
-                shape = com.kyant.shapes.Capsule()
-            ) {
-                Text(
-                    text = "确认",
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Color.White
-                )
-            }
-        }
+    SystemDialog(ownerKey = ownerKey, onDismissRequest = onDismiss,
+        icon = { Icon(Icons.Outlined.Campaign, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(36.dp)) },
+        title = { Text(announcement.title, style = MaterialTheme.typography.titleLarge) },
+        confirmButton = { SystemDialogButton(primary = true, onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("我知道了") } },
+        dismissButton = onOpenCenter?.let { open -> { SystemDialogButton(onClick = open, modifier = Modifier.fillMaxWidth()) { Text("打开公告中心") } } }
     ) {
-        // 可滚动的正文内容，限制最大高度
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .heightIn(max = 280.dp)
-                .verticalScroll(rememberScrollState())
-        ) {
-            if (announcement.contentType == "markdown") {
-                Material3RichText(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp)
-                ) {
-                    Markdown(content = announcement.content)
-                }
-            } else {
-                Text(
-                    text = announcement.content,
-                    fontSize = 16.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Start,
-                    lineHeight = 26.sp,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 4.dp)
-                )
-            }
+        Column(Modifier.fillMaxWidth().heightIn(max = 340.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            AnnouncementContent(announcement)
+            AnnouncementActions(announcement, onAction)
         }
     }
 }

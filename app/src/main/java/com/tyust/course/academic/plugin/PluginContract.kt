@@ -224,6 +224,7 @@ data class PluginManifest(val json: JSONObject) {
 
     fun validate(schema: PluginSchema) {
         schema.validate(json)
+        if (network.size > 60 && json.optInt("minAppVersionCode") < 126) invalid("超过 60 条网络规则需要 App 126")
         PluginSecurityContract.validate(this)
         BuiltinAcademicInheritance.configuration(this)
         PluginPlatformContract.validate(this)

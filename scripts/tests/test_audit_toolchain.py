@@ -38,6 +38,27 @@ class PublicAuditCoverageTests(unittest.TestCase):
             self_test_files(self.kit, '3.6.0')
         self.add_file('tests/native-navigation.test.mjs')
         self.assertIn('tests/native-navigation.test.mjs', self_test_files(self.kit, '3.6.0'))
+        with self.assertRaisesRegex(RuntimeError, 'SELF_TEST_FILES_MISSING'):
+            self_test_files(self.kit, '3.6.2')
+        self.add_file('tests/foreground-script.test.mjs')
+        self.add_file('tests/security-policy.test.mjs')
+        self.assertIn('tests/foreground-script.test.mjs', self_test_files(self.kit, '3.6.2'))
+        self.assertIn('tests/security-policy.test.mjs', self_test_files(self.kit, '3.6.2'))
+        with self.assertRaisesRegex(RuntimeError, 'SELF_TEST_FILES_MISSING'):
+            self_test_files(self.kit, '3.7.0')
+        for name in ['kingo', 'kingo-des', 'lntu']:
+            self.add_file('tests/'+name+'.test.mjs')
+        files = self_test_files(self.kit, '3.7.0')
+        self.assertTrue({'tests/kingo.test.mjs', 'tests/kingo-des.test.mjs', 'tests/lntu.test.mjs'}.issubset(files))
+        self.assertEqual(len(set(files)), len(files))
+        with self.assertRaisesRegex(RuntimeError, 'SELF_TEST_FILES_MISSING'):
+            self_test_files(self.kit, '3.7.1')
+        self.add_file('tests/auth-scope.test.mjs')
+        self.assertIn('tests/auth-scope.test.mjs', self_test_files(self.kit, '3.7.1'))
+        self.assertNotIn('tests/auth-scope.test.mjs', self_test_files(self.kit, '3.7.0'))
+        (self.kit/'tests/kingo-des.test.mjs').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'SELF_TEST_FILES_MISSING'):
+            self_test_files(self.kit, '3.7.1')
         (self.kit/'tests/chaoxing-academic.test.mjs').unlink()
         with self.assertRaisesRegex(RuntimeError, 'SELF_TEST_FILES_MISSING'):
             self_test_files(self.kit, '3.5.1')

@@ -97,6 +97,21 @@ private object ScheduleRouteMemoryCache {
     }
 }
 
+/** 撤销按钮的持久化恢复链；与课程编辑保存一样维护调度状态。 */
+internal fun restoreDeletedCustomCourse(
+    settingsManager: ScheduleSettingsManager,
+    reminderScheduler: ScheduleReminderScheduler,
+    account: String,
+    record: ScheduleCourseRecord,
+    remindersJson: String
+) {
+    settingsManager.updateCustomCourse(ScheduleSettingsManager.CustomCourse(record.id.removePrefix("custom:"), record.name,
+        record.location, record.teacher, record.day, record.startPeriod, record.endPeriod, record.weeks), account)
+    // 没开自身提醒的课程会带着空撤销载荷回来，也必须先恢复所有学期的冲突快照。
+    reminderScheduler.updateCustomCourse(account, record)
+    reminderScheduler.restoreUndo(remindersJson)
+}
+
 @Composable
 fun ScheduleRoute(isActive: Boolean = true) {
     val context = LocalContext.current
@@ -187,27 +202,38 @@ fun ScheduleRoute(isActive: Boolean = true) {
     val reminderScheduler = remember(context) { ScheduleReminderScheduler.get(context) }
     val customRevision = settingsManager.revision
     val customCourses = remember(customRevision, routeAccountKey) { settingsManager.getCustomCourses(routeAccountKey) }
+    var editingStudyKind by remember { mutableStateOf<ScheduleStudyKind?>(null) }
     val remindersRevision = reminderScheduler.revision
     val settingsTerm = settingsTermOverride ?: resolvedTermId
+    // 早/晚自习与课表共用一份数据，并且按「账号 + 当前浏览的学期」隔离：
+    // 设置页改完课表要立刻跟着变，同账号切到下学期也不能覆盖本学期。
+    val studyBlocks = remember(customRevision, routeAccountKey, settingsTerm) {
+        settingsManager.getStudyBlocks(routeAccountKey, settingsTerm)
+    }
     val termTimeBase = remember(settingsTerm, remindersRevision, customRevision, actualTermId) {
         scheduleRepository.timeBase(routeAccountKey, settingsTerm, actualTermId)
     }
     val displayedTimeBase = remember(resolvedTermId, remindersRevision, customRevision, actualTermId) {
         scheduleRepository.timeBase(routeAccountKey, resolvedTermId, actualTermId)
     }
-    fun periodTimesFor(base: ScheduleTimeBase?): List<ScheduleSettingsManager.PeriodTime> = settingsManager.getPeriodTimes().map {
-        it.copy(startTime = base?.periodStarts?.get(it.period) ?: it.startTime, endTime = base?.periodEnds?.get(it.period) ?: it.endTime)
-    }
+    fun periodTimesFor(base: ScheduleTimeBase?): List<ScheduleSettingsManager.PeriodTime> =
+        com.tyust.course.schedule.ScheduleTiming.mergePeriodTimes(base, settingsManager.getPeriodTimes(routeAccountKey))
     val focusRegistry = remember { com.tyust.course.ui.screen.ScheduleFocusRegistry() }
     val reminderRequest = CourseReminderNavigation.requestedId
     LaunchedEffect(reminderRequest) {
         if (reminderRequest != null) {
             detailSourceBounds = null
-            reminderScheduler.findById(reminderRequest)?.let {
-                notificationCourseJson = ReminderJson.reminder(it).toString()
-                notificationStartsAt = CourseReminderNavigation.requestedStartsAt
-                detailOccurrenceDate = notificationStartsAt?.let(ScheduleTimeBase::dateFromMillis)
-                detailId = it.course.id
+            reminderScheduler.findById(reminderRequest)?.let { reminder ->
+                val study = reminder.study
+                if (study != null) {
+                    // 自习提醒点开的是同一份自习编辑面板，而不是课程详情。
+                    editingStudyKind = study.kind
+                } else {
+                    notificationCourseJson = ReminderJson.reminder(reminder).toString()
+                    notificationStartsAt = CourseReminderNavigation.requestedStartsAt
+                    detailOccurrenceDate = notificationStartsAt?.let(ScheduleTimeBase::dateFromMillis)
+                    detailId = reminder.course.id
+                }
             }
             CourseReminderNavigation.consume()
         }
@@ -486,6 +512,8 @@ fun ScheduleRoute(isActive: Boolean = true) {
             detailOccurrenceDate = it.occurrenceDate
         },
         onCourseLongClick = { quickCourseId = it.id },
+        studyBlocks = studyBlocks,
+        onStudyClick = { editingStudyKind = it },
         onAddClick = { editingId = java.util.UUID.randomUUID().toString() },
         onWidgetClick = { showWidgetPicker = true },
         onSettingsClick = { settingsTermOverride = null; showSettingsDialog = true },
@@ -494,7 +522,7 @@ fun ScheduleRoute(isActive: Boolean = true) {
                 GlassToaster.show("课表为空，无法导出")
             } else {
                 try {
-                    val semesterStart = ScheduleDates.firstMonday(displayedTimeBase?.firstWeekDate)
+                    val semesterStart = ScheduleDates.firstWeekDate(displayedTimeBase?.firstWeekDate)
                     if (semesterStart == null) {
                         GlassToaster.show("请先设置这个学期的第一周周一日期")
                         settingsTermOverride = null
@@ -528,9 +556,7 @@ fun ScheduleRoute(isActive: Boolean = true) {
                     if (System.currentTimeMillis() < undoDeadline) {
                         val record = deletedCourseJson?.let { ReminderJson.course(JSONObject(it)) }
                         if (record != null) {
-                            settingsManager.updateCustomCourse(ScheduleSettingsManager.CustomCourse(record.id.removePrefix("custom:"), record.name,
-                                record.location, record.teacher, record.day, record.startPeriod, record.endPeriod, record.weeks), routeAccountKey)
-                            reminderScheduler.restoreUndo(deletedRemindersJson)
+                            restoreDeletedCustomCourse(settingsManager, reminderScheduler, routeAccountKey, record, deletedRemindersJson)
                         }
                     }
                     deletedCourseJson = null
@@ -544,6 +570,12 @@ fun ScheduleRoute(isActive: Boolean = true) {
         com.tyust.course.ui.system.GlassSubpage(onDismiss = { showSettingsDialog = false; settingsTermOverride = null }) { close ->
             ScheduleSettingsScreen(
                 manager = settingsManager,
+                studyBlocks = studyBlocks,
+                onStudyBlockChange = { block ->
+                    settingsManager.saveStudyBlock(block, routeAccountKey, settingsTerm)
+                    // 自习提醒走课程提醒同一条流水线：保存后立刻按新时间/新星期/新冲突重排。
+                    reminderScheduler.reconcile()
+                },
                 defaultLead = reminderScheduler.defaultLead(routeAccountKey),
                 onDefaultLead = { reminderScheduler.setDefaultLead(routeAccountKey, it) },
                 onAdjustments = { adjustmentCourseId = null; showAdjustments = true },
@@ -562,6 +594,21 @@ fun ScheduleRoute(isActive: Boolean = true) {
                 displayPreferences = displayPreferences,
                 onDisplayPreferences = { displayPreferences = it; displayStore.write(routeAccountKey, it) },
                 periodTimesOverride = periodTimesFor(termTimeBase),
+                presetAccountKey = routeAccountKey,
+                onApplyTimePreset = { timing ->
+                    if (settingsTerm.isBlank() || routeAccountKey.isBlank() ||
+                        UserManager.getInstance().currentAccountStorageKey != routeAccountKey ||
+                        (!isDemoMode && session.token.accountStorageKey != routeAccountKey)) {
+                        false
+                    } else {
+                        com.tyust.course.schedule.applyScheduleTimingToTerm(settingsManager, timing,
+                            reminderScheduler.timeBase(routeAccountKey, settingsTerm) ?: termTimeBase ?: ScheduleTimeBase()) { calendar ->
+                            reminderScheduler.updateTimeBase(routeAccountKey, settingsTerm, calendar)
+                        }
+                        com.tyust.course.schedule.ScheduleWidgetUpdater.update(context)
+                        true
+                    }
+                },
                 semesterStartOverride = termTimeBase?.firstWeekDate?.takeIf { it.isNotBlank() }?.let {
                     runCatching { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).parse(it)?.time }.getOrNull()
                 } ?: 0L,
@@ -571,6 +618,26 @@ fun ScheduleRoute(isActive: Boolean = true) {
                     val times = periodTimesFor(termTimeBase)
                     reminderScheduler.updateTimeBase(routeAccountKey, settingsTerm, ScheduleTimeBase(
                         ScheduleTimeBase.dateFromMillis(millis), times.associate { it.period to it.startTime }, times.associate { it.period to it.endTime }))
+                },
+                weekStart = settingsManager.getWeekStart(routeAccountKey),
+                onWeekStartChange = { chosen ->
+                    settingsManager.weekStart = chosen
+                    // Week 1 moves onto the chosen weekday, keeping the days the user already sees.
+                    val realignedDate = termTimeBase?.firstWeekDate?.takeIf { it.isNotBlank() }
+                        ?.let { ScheduleDates.normalizeFirstWeekDate(it, chosen) }
+                    val realigned = realignedDate?.let {
+                        runCatching { java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.ROOT).parse(it)?.time }.getOrNull()
+                    } ?: settingsManager.realignSemesterStart(chosen)
+                    if (realigned > 0L) {
+                        if (!isNextSemester && settingsTermOverride == null) settingsManager.semesterStartDate = realigned
+                        val times = periodTimesFor(termTimeBase)
+                        reminderScheduler.updateTimeBase(routeAccountKey, settingsTerm, ScheduleTimeBase(
+                            ScheduleTimeBase.dateFromMillis(realigned), times.associate { it.period to it.startTime }, times.associate { it.period to it.endTime }))
+                        // 切换每周第一天会整体挪动教学周日期：归一化后的日历可能被判成「没变」，
+                        // 所以这里把它当成独立的日历变更，显式重排该账号该学期已登记的闹钟。
+                        reminderScheduler.reschedule(routeAccountKey, settingsTerm)
+                        if (!isNextSemester && settingsTerm == resolvedTermId) pendingToday = true
+                    }
                 },
                 onPeriodTimesChange = { times ->
                     if (!isNextSemester && settingsTermOverride == null) settingsManager.savePeriodTimes(times)
@@ -648,6 +715,17 @@ fun ScheduleRoute(isActive: Boolean = true) {
                 detailSourceBounds = null
                 notificationCourseJson = null
                 focusRegistry.restore(course.id)
+            })
+    }
+    // 课表里点自习那条，就地打开同一个编辑面板。
+    editingStudyKind?.let { kind ->
+        com.tyust.course.ui.screen.ScheduleStudySheet(
+            block = studyBlocks.firstOrNull { it.kind == kind } ?: ScheduleStudyBlock.default(kind),
+            onDismiss = { editingStudyKind = null },
+            onSave = {
+                settingsManager.saveStudyBlock(it, routeAccountKey, settingsTerm)
+                reminderScheduler.reconcile()
+                editingStudyKind = null
             })
     }
     if (showAdjustments) com.tyust.course.ui.system.GlassSubpage(onDismiss = { showAdjustments = false }) { close ->

@@ -43,6 +43,12 @@ def self_test_files(kit,sdk_version):
             'tests/native-pattern.test.mjs','tests/gecko-runtime.test.mjs']
     if tuple(map(int,sdk_version.split('.'))) >= (3,6,0):
         files.append('tests/native-navigation.test.mjs')
+    if tuple(map(int,sdk_version.split('.'))) >= (3,6,2):
+        files += ['tests/foreground-script.test.mjs','tests/security-policy.test.mjs']
+    if tuple(map(int,sdk_version.split('.'))) >= (3,7,0):
+        files += ['tests/kingo.test.mjs','tests/kingo-des.test.mjs','tests/lntu.test.mjs']
+    if tuple(map(int,sdk_version.split('.'))) >= (3,7,1):
+        files.append('tests/auth-scope.test.mjs')
     if any(not (kit/name).is_file() for name in files):raise RuntimeError('SELF_TEST_FILES_MISSING')
     return files
 

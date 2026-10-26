@@ -23,8 +23,11 @@ internal object PluginHttpClients {
         while (clients.size > 16) {
             val oldest = clients.entries.iterator(); val entry = oldest.next(); oldest.remove(); entry.value.connectionPool.evictAll()
         }
-        return base.newBuilder().cookieJar(cookies).eventListener(Trace(operation)).build()
+        return base.newBuilder().cookieJar(cookies).build()
     }
+
+    fun call(operation: PluginOperation, url: HttpUrl, cookies: CookieJar, request: Request): Call =
+        PluginConnectFallbackCall(client(operation, url, cookies), Trace(operation), request, PluginConnectFallback.MAX_ATTEMPTS)
     @Synchronized fun clearPlugin(id: String) {
         val iterator = clients.entries.iterator()
         while (iterator.hasNext()) { val entry = iterator.next(); if (entry.key.startsWith(id + "\u0000")) { entry.value.connectionPool.evictAll(); iterator.remove() } }

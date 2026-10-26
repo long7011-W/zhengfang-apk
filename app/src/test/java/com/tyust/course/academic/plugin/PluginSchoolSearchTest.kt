@@ -12,7 +12,7 @@ class PluginSchoolSearchTest {
         assertTrue(row.builtin); assertFalse(row.configured)
         assertEquals("/admin", row.school.basePath)
         assertEquals("chaoxing_academic", row.school.academicSystem)
-        val custom = com.tyust.course.academic.AcademicSchoolProfiles.profiles.last().school().apply { basePath = "/custom" }
+        val custom = com.tyust.course.academic.AcademicSchoolProfiles.profiles.single { it.school().name.contains("武汉职业") }.school().apply { basePath = "/custom" }
         val preserved = PluginSchoolSearch.merge("武汉职业", listOf(custom), emptyList()).single()
         assertSame(custom, preserved.school); assertTrue(preserved.configured); assertFalse(preserved.builtin)
     }

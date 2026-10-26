@@ -98,11 +98,14 @@ private fun ScheduleCourseSheetContent(course: ScheduleCourseUi, account: String
     CourseDetailContent(
         CourseDetailUiState(course, conflicts, record?.enabled == true, term.isNotBlank(), description,
             record?.enabled == true && status.availability == ReminderAvailability.NeedsPermission,
-            status.availability == ReminderAvailability.NeedsTime, !ScheduleWeeks.parse(course.weeks).valid, sourceCenterX, timeRange, currentWeek),
+            status.availability == ReminderAvailability.NeedsTime, !ScheduleWeeks.parse(course.weeks).valid,
+            reminderLeadMinutes = record?.leadMinutes ?: scheduler.defaultLead(account),
+            reminderCustomLead = record?.customLead == true,
+            sourceCenterX = sourceCenterX, timeRange = timeRange, currentWeek = currentWeek),
         state, close,
         onReminderChanged = { enabled ->
             scheduler.setEnabled(key, originalCourse.record(), enabled)
-            // 打开开关时若权限不足就直接拉起申请，避免"开关亮了却一个闹钟都没排"。
+            // 打开开关时若权限不足就直接拉起申请，避免“开关亮了却一个闹钟都没排”。
             if (enabled && !scheduler.permissions().available) requestReminderPermission()
         },
         onPermission = { requestReminderPermission() }, onConfigureTime, onEdit, onDelete, extraActions = {

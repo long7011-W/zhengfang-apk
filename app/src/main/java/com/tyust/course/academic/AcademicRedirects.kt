@@ -4,6 +4,9 @@ import okhttp3.HttpUrl
 
 /** HUEL advertises HTTP callbacks even when its teaching application is served over TLS. */
 object AcademicRedirects {
+    /** CAS can cross several configured gateways before reaching the teaching application. */
+    const val MAX_REDIRECTS = 12
+
     fun preferVerifiedHttps(current: HttpUrl, target: HttpUrl): HttpUrl {
         fun inTeachingApp(url: HttpUrl) = url.encodedPath == "/jwglxt" || url.encodedPath.startsWith("/jwglxt/")
         return if (current.isHttps && current.port == 443 && current.host == "xk.huel.edu.cn" &&

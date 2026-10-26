@@ -44,6 +44,8 @@ object SystemDetector {
                 form.select("input[name=userAccount], input[name=userPassword], input[name=encoded]").size >= 3
         }
         return when {
+            (lower.contains("kingosoft") || lower.contains("kingo")) &&
+                (lower.contains("/frame/homes") || lower.contains("setkingoencypt") || lower.contains("青果")) -> AcademicSystem.KINGO
             (lower.contains("上海树维") || lower.contains("beangle")) &&
                 (lower.contains("beangle-ui") || lower.contains("login.action") || lower.contains("loginext.action")) -> AcademicSystem.EAMS
             lower.contains("powered by chaoxing") && (lower.contains("/admin/") || lower.contains("/xsd/")) -> AcademicSystem.CHAOXING_ACADEMIC

@@ -20,7 +20,7 @@ object AcademicGatewayFactory {
     /** Auto-detection opts into this flow but cannot create an adapter yet. */
     fun hasSelectedAdapter(school: SchoolConfig): Boolean = AcademicProviderRegistry.hasBinding(school) || when (AcademicSystem.fromId(school.academicSystem)) {
         AcademicSystem.ZF, AcademicSystem.LEGACY_ZF, AcademicSystem.ZF_OLD, AcademicSystem.QZ, AcademicSystem.QZ_OLD,
-        AcademicSystem.EAMS, AcademicSystem.CHAOXING_ACADEMIC -> true
+        AcademicSystem.EAMS, AcademicSystem.CHAOXING_ACADEMIC, AcademicSystem.KINGO -> true
         else -> false
     }
 
@@ -65,6 +65,11 @@ object AcademicGatewayFactory {
             else sessions.session(school.id, accountStorageKey, school.fullBasePath)
         if (username.isNotBlank()) session.username = username
         if (!replace && session.cookieHeader().isNotBlank()) return
+        importBrowserCookie(school, session, header)
+    }
+
+    /** Merge completed browser login cookies without replacing the adapter's pending continuation. */
+    internal fun importBrowserCookie(school: SchoolConfig, session: AcademicSession, header: String) {
         val url = school.getFullBasePath().trimEnd('/').toHttpUrlOrNull() ?: return
         val parsed = header.split(';').mapNotNull { part ->
             val separator = part.indexOf('=')
@@ -81,12 +86,12 @@ object AcademicGatewayFactory {
 
     fun loginUrl(school: SchoolConfig): String {
         com.tyust.course.academic.plugin.BundledAcademicProviders.matching(school)?.let { return it.loginUrl }
-        if (school.academicType() in setOf(AcademicSystem.EAMS, AcademicSystem.CHAOXING_ACADEMIC)) {
+        if (school.academicType() in setOf(AcademicSystem.EAMS, AcademicSystem.CHAOXING_ACADEMIC, AcademicSystem.KINGO)) {
             val supplied = runCatching { AcademicProviderRegistry.resolve(school)?.manifest?.json?.optJSONObject("builtinConfig") }.getOrNull()
             val options = com.tyust.course.academic.plugin.GenericAcademicProtocols.configuration(school, supplied).getJSONObject("protocolOptions")
             options.optString("loginUrl").takeIf { it.isNotBlank() }?.let { return it }
             return school.fullBasePath.trimEnd('/') + if (school.academicType() == AcademicSystem.EAMS)
-                options.optString("loginPath", "/login.action") else "?sfjrxk=1"
+                options.optString("loginPath", "/login.action") else if (school.academicType() == AcademicSystem.KINGO) "/cas/login.action" else "?sfjrxk=1"
         }
         if (school.academicType() == AcademicSystem.QZ) com.tyust.course.academic.plugin.GenericAcademicProtocols.configuration(school).optString("casServiceUrl").takeIf { it.isNotBlank() }?.let { return it }
         val path = when (AcademicSystem.fromId(school.academicSystem)) {

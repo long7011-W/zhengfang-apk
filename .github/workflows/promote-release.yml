@@ -53,6 +53,8 @@ jobs:
     needs: promote
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    outputs:
+      report-artifact-id: ${{ steps.upload-report.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,7 +89,8 @@ jobs:
       - name: Summarize individual delivery targets
         if: always()
         run: python3 scripts/delivery_summary.py promoted/stable-mirror.json
-      - uses: actions/upload-artifact@v4
+      - id: upload-report
+        uses: actions/upload-artifact@v4
         if: always()
         with:
           name: stable-mirror-report
@@ -106,8 +109,9 @@ jobs:
           ref: main
       - uses: actions/download-artifact@v4
         with:
-          name: stable-mirror-report
+          artifact-ids: ${{ needs.mirrors.outputs.report-artifact-id }}
           path: report
+          merge-multiple: true
       - name: Publish small metadata independently
         env:
           GH_TOKEN: ${{ github.token }}

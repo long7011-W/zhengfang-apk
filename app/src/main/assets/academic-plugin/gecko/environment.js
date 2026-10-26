@@ -23,5 +23,17 @@
     windows.set(target, proxy);
     return proxy;
   };
+  // Keep iframe DOM nodes native, but give their windows the same page-global
+  // access as unsafeWindow. Xrays otherwise hide helpers such as noSubmit even
+  // though the original script can read the iframe's native document.
+  const framePrototype = typeof HTMLIFrameElement === 'function' ? HTMLIFrameElement.prototype : null;
+  const frameWindow = framePrototype && Object.getOwnPropertyDescriptor(framePrototype, 'contentWindow');
+  if (frameWindow?.get) Object.defineProperty(framePrototype, 'contentWindow', {
+    ...frameWindow,
+    get() {
+      const child = frameWindow.get.call(this);
+      return child == null ? child : wrap(child);
+    }
+  });
   Object.defineProperty(globalThis, 'unsafeWindow', {value: wrap(window), configurable: true});
 })();

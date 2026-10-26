@@ -178,8 +178,14 @@ class PluginCenterActivity : ComponentActivity() {
         }
         fun bind(pkg: PluginPackage, returnToLogin: Boolean) {
             val target = school ?: return
-            AcademicProviderRegistry.setSchoolEnabled(pkg.manifest.id, target, true)
-            select(pkg.manifest.id)
+            try {
+                targetSchoolId = AcademicProviderRegistry.bindSchool(pkg, target).id
+            } catch (error: Exception) {
+                message = error.message ?: "学校适配选择失败"
+                return
+            }
+            changed = true; chooseProvider = false; generation++
+            message = "已保存本校选择，正在运行的任务继续使用原适配"
             selected = null
             if (returnToLogin) finish()
         }
@@ -528,10 +534,13 @@ class PluginCenterActivity : ComponentActivity() {
                     }
                     if (pkg.manifest.isAcademic && UserManager.getInstance().getSchoolById(pkg.manifest.school.getString("id")) == null) {
                         SystemDialogButton(onClick = {
-                            val added = AcademicProviderRegistry.school(pkg)
-                            UserManager.getInstance().addCustomSchool(added)
-                            targetSchoolId = added.id; changed = true; generation++
-                            message = "已添加学校，可使用此适配返回登录"
+                            try {
+                                val added = AcademicProviderRegistry.bindSchool(pkg)
+                                targetSchoolId = added.id; changed = true; generation++
+                                message = "已添加学校并选择此适配，可返回登录"
+                            } catch (error: Exception) {
+                                message = error.message ?: "学校适配选择失败"
+                            }
                         }) { Text("添加到学校列表") }
                     }
                     if (school != null && AcademicProviderRegistry.matches(pkg, school)) SystemDialogButton(onClick = {

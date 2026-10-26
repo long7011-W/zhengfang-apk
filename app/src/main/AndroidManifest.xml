@@ -6,6 +6,7 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
@@ -21,6 +22,8 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     
     <!-- 应用更新权限 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
@@ -96,6 +99,7 @@
         
         <activity android:name=".ui.system.GlassBrowserPreviewActivity" android:exported="false" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".academic.plugin.PluginCenterActivity" android:exported="false" android:configChanges="uiMode" android:windowSoftInputMode="adjustResize" />
+        <activity android:name=".academic.plugin.PluginMapSettingsActivity" android:exported="false" android:configChanges="uiMode" android:windowSoftInputMode="adjustResize" />
         <activity android:name=".academic.plugin.PluginDeveloperActivity" android:exported="false" android:configChanges="uiMode" />
         <activity android:name=".academic.plugin.CampusServiceCenterActivity" android:exported="false" android:configChanges="uiMode" />
         <activity android:name=".academic.plugin.ServicePluginActivity" android:exported="false" android:configChanges="uiMode" />
@@ -113,8 +117,12 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
         
-        <!-- Scheduled grab alarm receiver -->
-        <receiver android:name=".schedule.ScheduleWidgetProvider" android:exported="false" android:label="@string/schedule_widget_name">
+        <!-- 桌面小组件 provider：宿主桌面要能解析组件，exported 必须为 true（ColorOS 等 ROM 的
+             组件库里不列出的原因就是之前这里是 false）。除 APPWIDGET_UPDATE 外，下面过滤的
+             BOOT_COMPLETED / MY_PACKAGE_REPLACED / TIME_SET / TIMEZONE_CHANGED / DATE_CHANGED
+             都是系统发布的受保护广播，第三方应用无法伪造；即使被外部显式点名，效果也只是一次
+             无害的小组件刷新。 -->
+        <receiver android:name=".schedule.ScheduleWidgetProvider" android:exported="true" android:label="@string/schedule_widget_name">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
@@ -125,13 +133,17 @@
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/schedule_widget_info" />
         </receiver>
-        <receiver android:name=".schedule.ScheduleSingleWidgetProvider" android:label="@string/schedule_widget_single_name" android:exported="false">
+        <receiver android:name=".schedule.ScheduleSingleWidgetProvider" android:label="@string/schedule_widget_single_name" android:exported="true">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/schedule_widget_single_info" />
         </receiver>
-        <receiver android:name=".schedule.ScheduleTimelineWidgetProvider" android:label="@string/schedule_widget_timeline_name" android:exported="false">
+        <receiver android:name=".schedule.ScheduleTimelineWidgetProvider" android:label="@string/schedule_widget_timeline_name" android:exported="true">
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/schedule_widget_timeline_info" />
+        </receiver>
+        <receiver android:name=".schedule.ScheduleCountdownWidgetProvider" android:label="@string/schedule_widget_countdown_name" android:exported="true">
+            <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/schedule_widget_countdown_info" />
         </receiver>
         <receiver android:name=".schedule.CourseReminderReceiver" android:exported="false">
             <intent-filter>
@@ -142,6 +154,18 @@
                 <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
             </intent-filter>
         </receiver>
+        <receiver android:name=".schedule.ClassQuietReceiver" android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+                <action android:name="android.app.action.NOTIFICATION_POLICY_ACCESS_GRANTED_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <service android:name=".schedule.ScheduleRefreshJobService"
+            android:permission="android.permission.BIND_JOB_SERVICE" android:exported="true" />
         <receiver
             android:name=".receiver.GrabAlarmReceiver"
             android:exported="false">

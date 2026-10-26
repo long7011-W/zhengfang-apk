@@ -11,6 +11,36 @@ import java.io.File
 import java.util.concurrent.TimeUnit
 
 class AcademicPluginSsoHostTest {
+    @Test fun sixHopAuthenticationReachesTheDeclaredTeachingService() {
+        MockWebServer().use { source -> MockWebServer().use { teaching ->
+            repeat(5) { hop -> source.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/api/hop/${hop + 1}")) }
+            source.enqueue(MockResponse().setResponseCode(302).setHeader("Location", teaching.url("/api/callback?ticket=synthetic")))
+            teaching.enqueue(MockResponse().setBody("authenticated"))
+            val result = host(source, teaching, auth = true).call("http", request(source, null, "auth")).getJSONObject("data")
+            assertEquals(200, result.getInt("status")); assertEquals("authenticated", result.getString("body"))
+            assertEquals(6, source.requestCount); assertEquals(1, teaching.requestCount)
+        } }
+    }
+
+    @Test fun anUndeclaredSeventhHopStillCannotReceiveTheLoginRequest() {
+        MockWebServer().use { source -> MockWebServer().use { outside ->
+            repeat(6) { hop -> source.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/api/hop/${hop + 1}")) }
+            source.enqueue(MockResponse().setResponseCode(302).setHeader("Location", outside.url("/api/callback")))
+            try { host(source, auth = true).call("http", request(source, null, "auth")); fail("Undeclared target must stop") }
+            catch (error: PluginException) { assertEquals(PluginErrorCode.UNTRUSTED_URL, error.code) }
+            assertEquals(7, source.requestCount); assertEquals(0, outside.requestCount)
+        } }
+    }
+
+    @Test fun pluginRedirectLoopsRemainBounded() {
+        MockWebServer().use { server ->
+            repeat(14) { server.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/api/again")) }
+            try { host(server, auth = true).call("http", request(server, null, "auth")); fail("Loop must stop") }
+            catch (error: PluginException) { assertEquals(PluginErrorCode.VALIDATION_FAILED, error.code) }
+            assertEquals(13, server.requestCount)
+        }
+    }
+
     @Test fun redirectsRefreshRefererAndConfiguredUserAgentForEachTarget() {
         MockWebServer().use { source -> MockWebServer().use { target ->
             source.enqueue(MockResponse().setResponseCode(302).setHeader("Location", target.url("/api/end?ticket=fictional")))

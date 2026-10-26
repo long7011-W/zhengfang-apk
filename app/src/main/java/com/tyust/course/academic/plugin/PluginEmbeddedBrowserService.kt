@@ -104,12 +104,16 @@ class PluginEmbeddedBrowserService : Service() {
         val settings = GeckoRuntimeSettings.Builder().arguments(arrayOf("-profile", directory.absolutePath))
             .javaScriptEnabled(true).remoteDebuggingEnabled(false).consoleOutput(false).build()
         val runtime = GeckoRuntime.create(this, settings)
+        runtime.setDelegate(object : GeckoRuntime.Delegate {
+            override fun onShutdown() { terminateBrowserProcess() }
+        })
         EmbeddedBrowserRuntime.runtime = runtime
         // Restored extensions wait for the first Gecko window's startup event.
         // Open an unexposed blank session before waiting for the native port.
         val startup = GeckoSession()
         try {
             startup.open(runtime)
+            startup.setActive(true)
             bootstrapSession = startup
             connectExtension(runtime, input)
         } catch (error: Throwable) {
@@ -259,7 +263,14 @@ class PluginEmbeddedBrowserService : Service() {
         // Script controls target the desktop course markup. Login pages keep their mobile layout.
         if (scriptHandle != null) settings.userAgentMode(GeckoSessionSettings.USER_AGENT_MODE_DESKTOP)
             .viewportMode(GeckoSessionSettings.VIEWPORT_MODE_DESKTOP)
-        val session = GeckoSession(settings.build())
+        val session = if (scriptHandle == null) GeckoSession(settings.build()) else object : GeckoSession(settings.build()) {
+            override fun setActive(active: Boolean) {
+                // GeckoView deactivates a session when its Android surface goes
+                // away. A running foreground script owns that session independently
+                // of the surface; keep its timers alive until the task is stopped.
+                super.setActive(active || !closing && script?.optString("handle") == scriptHandle)
+            }
+        }
         val p = EmbeddedBrowserRuntime.Page("b" + UUID.randomUUID().toString().replace("-", ""), session, origins, scriptHandle, url)
         EmbeddedBrowserRuntime.pages[p.handle] = p
         session.navigationDelegate = object : GeckoSession.NavigationDelegate {
@@ -273,8 +284,11 @@ class PluginEmbeddedBrowserService : Service() {
                 }
                 return GeckoResult.fromValue(if (request.uri == "about:blank" || allows(request.uri, p.origins)) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
             }
-            override fun onSubframeLoadRequest(session: GeckoSession, request: GeckoSession.NavigationDelegate.LoadRequest): GeckoResult<AllowOrDeny> =
-                GeckoResult.fromValue(if (request.uri == "about:blank" || allows(request.uri, PluginJson.objects(config.getJSONArray("network")).map { it.getString("origin") }.toSet())) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
+            override fun onSubframeLoadRequest(session: GeckoSession, request: GeckoSession.NavigationDelegate.LoadRequest): GeckoResult<AllowOrDeny> {
+                val runningScript = p.scriptHandle != null && script?.optString("handle") == p.scriptHandle
+                return GeckoResult.fromValue(if (PluginBrowserNavigation.allowsLocalSubframe(request.uri, runningScript) ||
+                    allows(request.uri, PluginJson.objects(config.getJSONArray("network")).map { it.getString("origin") }.toSet())) AllowOrDeny.ALLOW else AllowOrDeny.DENY)
+            }
             override fun onLocationChange(session: GeckoSession, url: String?, perms: MutableList<GeckoSession.PermissionDelegate.ContentPermission>, hasUserGesture: Boolean) {
                 if (url != null) p.url = url
                 EmbeddedBrowserRuntime.activity?.updateBar()
@@ -308,6 +322,12 @@ class PluginEmbeddedBrowserService : Service() {
             })
         }
         session.open(EmbeddedBrowserRuntime.runtime!!)
+        // A user-started script remains owned by the foreground task after its
+        // view is detached. Preserve its document when Gecko trims inactive tabs.
+        if (scriptHandle != null) {
+            session.setPriorityHint(GeckoSession.PRIORITY_HIGH)
+            session.setActive(true)
+        }
         if (active || EmbeddedBrowserRuntime.visible == null) EmbeddedBrowserRuntime.visible = p.handle
         if (load) session.loadUri(url)
         EmbeddedBrowserRuntime.activity?.render()
@@ -351,9 +371,13 @@ class PluginEmbeddedBrowserService : Service() {
         scope.cancel(); stopSelf()
         runCatching { EmbeddedBrowserRuntime.runtime?.shutdown() }
         // GeckoRuntime is process-singleton. Account replacement always creates a fresh process.
-        Handler(Looper.getMainLooper()).postDelayed({
-            val name = if (Build.VERSION.SDK_INT >= 28) android.app.Application.getProcessName() else File("/proc/self/cmdline").readText().substringBefore('\u0000')
-            if (name.endsWith(":plugin_embedded_browser")) Process.killProcess(Process.myPid())
-        }, 300)
+        // Wait for Gecko:Exited so its cookie database has finished writing. The former
+        // 300 ms kill could discard cookies even after cookies.set had returned success.
+        // Only use the watchdog if Gecko cannot finish shutdown at all.
+        Handler(Looper.getMainLooper()).postDelayed({ terminateBrowserProcess() }, 8_000)
+    }
+    private fun terminateBrowserProcess() {
+        val name = if (Build.VERSION.SDK_INT >= 28) android.app.Application.getProcessName() else File("/proc/self/cmdline").readText().substringBefore('\u0000')
+        if (name.endsWith(":plugin_embedded_browser")) Process.killProcess(Process.myPid())
     }
 }

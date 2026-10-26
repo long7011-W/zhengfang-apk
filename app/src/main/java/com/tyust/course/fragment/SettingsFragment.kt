@@ -35,6 +35,10 @@ class SettingsFragment : Fragment() {
     ): View {
         return ComposeView(requireContext()).apply {
             setContent {
+                var showClassQuiet by androidx.compose.runtime.remember { mutableStateOf(false) }
+                val quietManager = androidx.compose.runtime.remember {
+                    com.tyust.course.schedule.ClassQuietManager.get(requireContext())
+                }
                 SettingsScreen(
                     studentName = studentName,
                     studentId = studentId,
@@ -47,11 +51,14 @@ class SettingsFragment : Fragment() {
                     onCredits = { handleCredits() },
                     onLogout = { handleLogout() },
                     onQuotaClick = { showQuotaDetails() },
+                    classQuietSummary = quietManager.status.summary,
+                    onClassQuietSettings = { showClassQuiet = true },
                     navBarAutoCollapseEnabled = AppearanceSettingsManager.navBarAutoCollapseEnabled,
                     onNavBarAutoCollapseChange = { AppearanceSettingsManager.updateNavBarAutoCollapse(it) },
                     isSuper = isSuper,
                     quotaInfo = quotaInfo
                 )
+                if (showClassQuiet) com.tyust.course.ui.screen.ClassQuietSettingsDialog { showClassQuiet = false }
             }
         }
     }

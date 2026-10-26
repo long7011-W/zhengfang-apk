@@ -1,5 +1,6 @@
 package com.tyust.course.academic.plugin
 
+import com.tyust.course.academic.AcademicSchoolProfiles
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
 
@@ -7,7 +8,7 @@ import org.json.JSONObject
 internal object AcademicProtocolOptions {
     private fun invalid(): Nothing = throw PluginException(PluginErrorCode.VALIDATION_FAILED, "教务协议配置无效")
     fun resolve(system: String, base: String, supplied: JSONObject?): JSONObject? {
-        if (system !in setOf("eams", "chaoxing_academic")) {
+        if (system !in setOf("eams", "chaoxing_academic", "kingo")) {
             if (supplied != null) invalid()
             return null
         }
@@ -15,13 +16,16 @@ internal object AcademicProtocolOptions {
         if (!endpoint.isHttps || endpoint.username.isNotEmpty() || endpoint.password.isNotEmpty() ||
             endpoint.query != null || endpoint.fragment != null || endpoint.encodedPath.any { it in "%\\" }) invalid()
         val result = when (system to base) {
+            "kingo" to "https://jw.hnae.edu.cn" -> JSONObject().put("loginUrl", AcademicSchoolProfiles.HNAE_LOGIN_URL)
+            "eams" to "https://webvpn.lntu.edu.cn${AcademicSchoolProfiles.LNTU_BASE_PATH}" -> JSONObject()
+                .put("loginUrl", "https://webvpn.lntu.edu.cn/").put("homePath", "/homeExt.action").put("webVpnTarget", "jwxt.lntu.edu.cn:8080")
             "eams" to "https://www.cduestc.cn/eams" -> JSONObject().put("loginPath", "/loginExt.action").put("homePath", "/homeExt.action").put("examMode", "examTable")
             "chaoxing_academic" to "https://jwxt1.wtc.edu.cn/admin" -> JSONObject().put("loginUrl", "https://authserver.wtc.edu.cn/authserver/login?service=https%3A%2F%2Fjwxt1.wtc.edu.cn%2Fadmin%2Fcaslogin")
             else -> JSONObject()
         }
         supplied?.let { options ->
             if (options.optString("protocol") != system) invalid()
-            val keys = if (system == "eams") setOf("protocol", "loginPath", "homePath", "loginUrl", "examMode", "periods") else setOf("protocol", "loginUrl")
+            val keys = if (system == "eams") setOf("protocol", "loginPath", "homePath", "loginUrl", "examMode", "periods", "webVpnTarget") else if (system == "kingo") setOf("protocol", "loginUrl", "periods") else setOf("protocol", "loginUrl")
             if (options.keys().asSequence().any { it !in keys }) invalid()
             if (options.has("loginUrl")) {
                 val login = options.getString("loginUrl").toHttpUrlOrNull() ?: invalid()
@@ -30,6 +34,12 @@ internal object AcademicProtocolOptions {
             if (options.has("loginPath") && options.getString("loginPath") !in setOf("/login.action", "/loginExt.action")) invalid()
             if (options.has("homePath") && options.getString("homePath") !in setOf("/home.action", "/homeExt.action")) invalid()
             if (options.has("examMode") && options.getString("examMode") !in setOf("form", "examTable")) invalid()
+            if (options.has("webVpnTarget")) {
+                val target = options.getString("webVpnTarget")
+                if (!Regex("[a-z0-9.-]+(?::[1-9][0-9]{0,4})?").matches(target) ||
+                    "http://$target".toHttpUrlOrNull() == null ||
+                    !Regex("/(?:https?|https?-[0-9]+)/[a-f0-9]{32,}/.+").matches(endpoint.encodedPath)) invalid()
+            }
             if (options.has("periods") && options.optJSONArray("periods") == null) invalid()
             options.optJSONArray("periods")?.let { array ->
                 val periods = PluginJson.objects(array)

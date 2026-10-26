@@ -11,6 +11,7 @@ import org.json.JSONObject
 internal class PluginAuthScope(value: JSONObject) {
     val login: HttpUrl
     val service: HttpUrl
+    private var callbackReached = false
     init {
         if (value.keys().asSequence().toSet() != setOf("loginUrl", "serviceUrl")) denied()
         login = endpoint(value.optString("loginUrl")); service = endpoint(value.optString("serviceUrl"))
@@ -18,9 +19,16 @@ internal class PluginAuthScope(value: JSONObject) {
     }
     fun isLogin(url: HttpUrl) = under(url, login)
     fun isService(url: HttpUrl) = under(url, service)
+    fun isServiceOrigin(url: HttpUrl) = origin(url) == origin(service)
+    /** Only a response from the registered callback advances this one HTTP call. */
+    fun responseReceived(url: HttpUrl) {
+        if (isServiceOrigin(url) && url.encodedPath == service.encodedPath) callbackReached = true
+    }
     fun requireAllowed(url: HttpUrl, method: String) {
         endpoint(url.toString())
-        if ((!isLogin(url) && !isService(url)) || (method == "POST" && !isLogin(url))) denied()
+        val continuation = callbackReached && isServiceOrigin(url) && method in setOf("GET", "HEAD")
+        if (method !in setOf("GET", "HEAD", "POST") ||
+            (!isLogin(url) && !isService(url) && !continuation) || (method == "POST" && !isLogin(url))) denied()
         val callbacks = url.queryParameterValues("service")
         if (isLogin(url) && url.encodedPath == login.encodedPath && callbacks.isNotEmpty() && callbacks != listOf(service.toString())) denied()
         if (url.queryParameter("ticket") != null && (!isService(url) || url.encodedPath != service.encodedPath)) denied()
@@ -46,7 +54,7 @@ internal class PluginAcademicCookies(
     private val base = session.baseUrl.toHttpUrlOrNull()
     private fun jar(url: HttpUrl): CookieJar {
         active()
-        val teaching = if (scope != null) scope.isService(url) && !scope.isLogin(url)
+        val teaching = if (scope != null) scope.isServiceOrigin(url) && !scope.isLogin(url)
             else base != null && base.host == url.host && (base.port == url.port || base.port in setOf(80, 443) && url.port in setOf(80, 443))
         return if (teaching) session.cookies else session.authenticationCookies(providerId + ":" + PluginAuthScope.origin(url))
     }

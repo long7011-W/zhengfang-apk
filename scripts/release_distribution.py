@@ -605,7 +605,7 @@ def verify_with_recovery(action, check, report, budget, settle_delays=()):
                     raise
                 if failure and any(word in str(failure) for word in ['10000', '10001', '10002', '10003', '10004', '10005', '10006', '9109', 'Authentication', 'permission', 'limit']):
                     raise failure
-                pending = str(error).startswith('Published manifest differs;') or re.fullmatch(
+                pending = str(error).startswith(('Published manifest differs;', 'Published artifact manifest differs;')) or re.fullmatch(
                     r'Public download returned HTTP (404|408|425|429|500|502|503|504)', str(error))
                 if not pending or read_attempt == len(settle_delays):
                     break

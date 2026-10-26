@@ -44,9 +44,18 @@ class MetadataTests(unittest.TestCase):
         self.publish(); self.publish()
         self.assertEqual(len(self.store.files['announcement.json']['announcements']),2)
     def test_missing_domestic_candidate_keeps_previous_metadata(self):
-        with patch.object(m,'verify_manifest',return_value=self.p), patch.object(m,'gh_api',return_value=self.release), patch.object(m,'fetch',side_effect=d.DeliveryError('timeout')):
+        with patch.object(m,'verify_manifest',return_value=self.p), patch.object(m,'gh_api',return_value=self.release), patch.object(m,'fetch',side_effect=d.DeliveryError('timeout')) as fetch:
             with self.assertRaises(d.DeliveryError): m.publish_metadata(self.store,{},d.Budget())
+        self.assertEqual(fetch.call_count,2)
         self.assertFalse(self.store.writes)
+    def test_transient_mirror_timeout_retries_before_publishing_the_signed_metadata(self):
+        budget=d.Budget()
+        with patch.object(m,'verify_manifest',return_value=self.p), patch.object(m,'gh_api',return_value=self.release), patch.object(m,'fetch',side_effect=[d.DeliveryError('timeout'),True]) as fetch:
+            m.publish_metadata(self.store,{'signed':True},budget,signed_only=True)
+        self.assertEqual(fetch.call_count,2)
+        self.assertEqual([call.kwargs['revalidate'] for call in fetch.call_args_list],[False,True])
+        self.assertTrue(all(call.kwargs['expected'] is self.p and call.args[2] is budget for call in fetch.call_args_list))
+        self.assertEqual([name for _,name,_ in self.store.writes],['app-update-stable.json'])
     def test_newer_legacy_metadata_not_overwritten(self):
         self.store.files['version.json']={'versionCode':99}
         with self.assertRaises(d.DeliveryError): self.publish()

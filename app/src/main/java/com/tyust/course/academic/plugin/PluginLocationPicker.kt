@@ -30,6 +30,8 @@ import com.tyust.course.ui.system.GlassFormField
 import com.tyust.course.ui.system.SystemCard
 import com.tyust.course.ui.system.InsetGroupedRow
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeout
 import org.json.JSONObject
@@ -53,6 +55,29 @@ import java.util.Locale
     var locating by remember { mutableStateOf(false) }
     var feedback by remember { mutableStateOf("") }
     var revision by remember { mutableIntStateOf(0) }
+    var mapConfiguration by remember { mutableStateOf<PluginAmapConfiguration?>(null) }
+    var mapConfigAttempt by remember { mutableIntStateOf(0) }
+    var mapConfigLoading by remember { mutableStateOf(true) }
+    var mapConfigFeedback by remember { mutableStateOf("") }
+    var amapConsent by remember { mutableStateOf(PluginAmap.hasConsent(app)) }
+    var basicMap by rememberSaveable(prompt.id) { mutableStateOf(false) }
+    var searchGeneration by remember { mutableIntStateOf(0) }
+    var searchJob by remember { mutableStateOf<Job?>(null) }
+    var searchSource by remember { mutableStateOf("") }
+    val amapKey = mapConfiguration?.apiKey?.takeIf { amapConsent && !basicMap }
+    LaunchedEffect(prompt.id, mapConfigAttempt) {
+        mapConfigLoading = true; mapConfigFeedback = ""
+        try { mapConfiguration = PluginAmap.configuration(app) }
+        catch (error: CancellationException) { throw error }
+        catch (error: java.io.IOException) { mapConfigFeedback = error.message?.takeIf { listOf("高德", "此版本", "地图配置").any(it::startsWith) }?.take(200) ?: "高德授权暂未就绪，可重试或继续使用基础地图" }
+        catch (_: Exception) { mapConfigFeedback = "高德授权暂未就绪，可重试或继续使用基础地图" }
+        finally { mapConfigLoading = false }
+    }
+    LaunchedEffect(mapConfiguration) {
+        val expiresAt = mapConfiguration?.expiresAt ?: return@LaunchedEffect
+        delay((expiresAt * 1000 - System.currentTimeMillis()).coerceAtLeast(0))
+        mapConfiguration = null; mapConfigAttempt++
+    }
     val point = runCatching { PluginCoordinates.convert(PluginCoordinates.Point(latitude.toDouble(), longitude.toDouble()), system, system) }.getOrNull()
     fun choose(value: PluginCoordinates.Point, name: String? = null) {
         val converted = PluginCoordinates.convert(value, "WGS84", system)
@@ -85,13 +110,23 @@ import java.util.Locale
     fun search() {
         if (searching || query.trim().length < 2) return
         val text = query.trim(); searching = true; feedback = ""; results = emptyList()
+        val generation = ++searchGeneration
+        searchSource = "云端地图服务"
         focus.clearFocus(); keyboard?.hide()
-        scope.launch {
-            try { results = PluginLocationSearch.search(text); if (results.isEmpty()) feedback = "没有找到，可缩短名称或在地图中选点" }
+        searchJob = scope.launch {
+            try {
+                val found = PluginLocationSearch.search(text)
+                if (generation == searchGeneration) {
+                    results = found
+                    feedback = if (found.isEmpty()) "没有找到，可缩短名称或在地图中选点"
+                        else if (found.none { it.exact }) "未找到完全匹配的地点；以下为相近结果，请核对城市、楼栋或航站楼后选择"
+                        else ""
+                }
+            }
             catch (e: CancellationException) { throw e }
-            catch (e: PluginLocationSearch.Failure) { feedback = e.message.orEmpty() }
-            catch (_: Exception) { feedback = "搜索暂不可用，可用当前位置、地图或坐标" }
-            finally { searching = false }
+            catch (e: PluginLocationSearch.Failure) { if (generation == searchGeneration) feedback = e.message.orEmpty() }
+            catch (_: Exception) { if (generation == searchGeneration) feedback = "搜索暂不可用，可用当前位置、地图或坐标" }
+            finally { if (generation == searchGeneration) searching = false }
         }
     }
     val height = (LocalConfiguration.current.screenHeightDp * 0.42f).dp.coerceIn(260.dp, 460.dp)
@@ -100,16 +135,17 @@ import java.util.Locale
             prompt.result.complete(JSONObject().put("latitude", point!!.latitude).put("longitude", point.longitude)
                 .put("address", address.ifBlank { "已选地点" }).put("coordinateSystem", system))
         }) { Text("使用此地点") } }, dismissButton = { SystemDialogButton(modifier = Modifier.fillMaxWidth(), onClick = { prompt.result.complete(null) }) { Text("取消") } }) {
-        GlassFormField(query, { query = it.take(120) }, label = "搜索学校、教学楼或地址", placeholder = "例如：太原科技大学", modifier = Modifier.fillMaxWidth().testTag("location-search-input"),
+        GlassFormField(query, { query = it.take(120); searchGeneration++; searchJob?.cancel(); searching = false; results = emptyList() }, label = "搜索学校、教学楼或地址", placeholder = "例如：太原科技大学", modifier = Modifier.fillMaxWidth().testTag("location-search-input"),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search), keyboardActions = KeyboardActions(onSearch = { search() }), trailing = {
                 TextButton(enabled = !searching && query.trim().length >= 2, onClick = { search() }) { Text(if (searching) "搜索中" else "搜索") }
             })
         results.forEachIndexed { index, place ->
             SystemCard(modifier = Modifier.fillMaxWidth().testTag("location-search-result-$index"), contentPadding = PaddingValues(0.dp)) {
-                InsetGroupedRow(title = place.title, subtitle = place.address.takeIf { it != place.title },
+                InsetGroupedRow(title = place.title, subtitle = (if (place.exact) "" else "相近地点 · ") + place.address,
                     onClick = { choose(place.point, place.name); results = emptyList() }, showDivider = false)
             }
         }
+        if (results.isNotEmpty()) Text("结果来自 $searchSource", style = MaterialTheme.typography.bodySmall)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             SystemDialogButton(modifier = Modifier.weight(1f), enabled = !locating, onClick = {
                 if (ContextCompat.checkSelfPermission(app, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED) locate()
@@ -117,7 +153,26 @@ import java.util.Locale
             }) { Text(if (locating) "正在定位…" else "当前位置") }
             SystemDialogButton(modifier = Modifier.weight(1f), enabled = point != null, onClick = { revision++ }) { Text("回到选点") }
         }
-        PluginLocationMap(latestPoint, revision, { choose(it) }, Modifier.fillMaxWidth().height(height))
+        if (mapConfiguration?.apiKey != null && !amapConsent) SystemCard(modifier = Modifier.fillMaxWidth()) {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("使用高德地图", style = MaterialTheme.typography.titleSmall)
+                Text("高德地图 SDK 会处理设备及网络信息和地图坐标，用于显示地图。点击下方按钮表示同意高德隐私说明；也可继续使用基础地图。地址搜索由云端提供。", style = MaterialTheme.typography.bodySmall)
+                TextButton(onClick = { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(PluginAmap.PRIVACY_URL))) }) { Text("查看高德隐私说明") }
+                SystemDialogButton(primary = true, modifier = Modifier.testTag("amap-consent"), onClick = {
+                    PluginAmap.consent(app); amapConsent = true; basicMap = false
+                }) { Text("同意并启用高德") }
+            }
+        }
+        if (amapKey != null) PluginAmapSurface(amapKey, latestPoint, revision, { choose(it) }, Modifier.fillMaxWidth().height(height))
+        else PluginLocationMap(latestPoint, revision, { choose(it) }, Modifier.fillMaxWidth().height(height))
+        if (mapConfigLoading) Text("正在获取地图配置…", style = MaterialTheme.typography.bodySmall)
+        else if (mapConfigFeedback.isNotEmpty()) {
+            Text(mapConfigFeedback, style = MaterialTheme.typography.bodySmall)
+            TextButton(onClick = { mapConfigAttempt++ }) { Text("重试高德授权") }
+        }
+        if (amapConsent && mapConfiguration?.apiKey != null) TextButton(onClick = { basicMap = !basicMap; results = emptyList() }) {
+            Text(if (basicMap) "切换高德地图" else "切换基础地图")
+        }
         Text("双指缩放地图，点击放置标记", style = MaterialTheme.typography.bodySmall)
         if (feedback.isNotEmpty()) Text(feedback, style = MaterialTheme.typography.bodyMedium)
         GlassFormField(address, { address = it.take(500) }, label = "地点名称", modifier = Modifier.fillMaxWidth(),
@@ -139,10 +194,10 @@ import java.util.Locale
             GlassFormField(longitude, { longitude = it.take(24); revision++ }, label = "经度（−180～180）", modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
             GlassFormField(latitude, { latitude = it.take(24); revision++ }, label = "纬度（−90～90）", modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal))
             if (point == null && (latitude.isNotEmpty() || longitude.isNotEmpty())) Text("请输入有效的经纬度", color = MaterialTheme.colorScheme.error)
-            Text("地图与定位使用 WGS-84，高德 / 腾讯为 GCJ-02，百度为 BD-09。保存时保留来源，签到时自动换算。", style = MaterialTheme.typography.bodySmall)
+            Text("GPS 与基础地图使用 WGS-84，高德 / 腾讯为 GCJ-02，百度为 BD-09。地图选点自动换算，保存时保留所选来源。", style = MaterialTheme.typography.bodySmall)
         }
-        TextButton(onClick = { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.openstreetmap.org/copyright"))) }) {
-            Text("© OpenStreetMap · 搜索 Nominatim · MapLibre", style = MaterialTheme.typography.labelSmall)
+        TextButton(onClick = { app.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(if (amapKey != null) "https://www.amap.com" else "https://www.openstreetmap.org/copyright"))) }) {
+            Text(if (amapKey != null) "地图 © 高德地图；搜索由云端提供" else "基础地图 © OpenStreetMap · MapLibre；搜索由云端提供", style = MaterialTheme.typography.labelSmall)
         }
     }
 }

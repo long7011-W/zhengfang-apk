@@ -22,6 +22,56 @@ class PluginSandboxDeviceTest {
         sessions.session("test-school", "test-account", "https://school.test"),
         PluginManifest(manifest.put("apiVersion", 3).put("id", "test.school").put("kind", "independent").put("version", "1.0.0")), method, development = true)
     private suspend fun run(source: String, op: PluginOperation = operation()) = PluginSandboxClient(context).execute(source, JSONObject(), op, PluginHost(op, context.cacheDir))
+    @Test fun parallelInvocationsKeepIndependentStateAcrossEngineLifetimes() = runBlocking {
+        val source = """globalThis.plugin={study:{terms:async(a,c,s)=>{
+            globalThis.marker=a.marker;
+            return {ok:true,data:{marker:globalThis.marker,text:s.html.text('<b>A &amp; B</b>')}};
+        }}};"""
+        withTimeout(60_000) {
+            repeat(30) { batch ->
+                val ready = CompletableDeferred<Unit>()
+                val calls = (0 until 8).map { index ->
+                    async(Dispatchers.IO) {
+                        ready.await()
+                        val marker = "batch-$batch-page-$index"
+                        val op = operation()
+                        try {
+                            val data = PluginSandboxClient(context).execute(source, JSONObject().put("marker", marker),
+                                op, PluginHost(op, context.cacheDir)).getJSONObject("data")
+                            assertEquals(marker, data.getString("marker"))
+                            assertEquals("A & B", data.getString("text"))
+                        } finally { op.close() }
+                    }
+                }
+                ready.complete(Unit)
+                calls.awaitAll()
+            }
+        }
+    }
+    @Test fun slowHostCallDoesNotBlockAnotherEngineOrItsCancellationRecovery() = runBlocking {
+        MockWebServer().use { server ->
+            server.start()
+            server.enqueue(MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.NO_RESPONSE))
+            val origin = server.url("/").toString().trimEnd('/')
+            val manifest = JSONObject("""{"network":[{"origin":"$origin","pathPrefix":"/wait","methods":["GET"],"purposes":["query"]}]}""")
+            val op = operation(manifest = manifest)
+            val pending = launch(Dispatchers.IO) {
+                try { run("""globalThis.plugin={study:{terms:async(a,c,s)=>({ok:true,data:await s.http({url:'$origin/wait',purpose:'query'})})}};""", op) }
+                finally { op.close() }
+            }
+            try {
+                assertNotNull(withContext(Dispatchers.IO) { server.takeRequest(10, TimeUnit.SECONDS) })
+                withTimeout(5_000) {
+                    assertTrue(run("globalThis.plugin={study:{terms:()=>({ok:true,data:{}})}};").getBoolean("ok"))
+                }
+            } finally {
+                withContext(NonCancellable) { withTimeout(5_000) { pending.cancelAndJoin() } }
+            }
+            withTimeout(5_000) {
+                assertTrue(run("globalThis.plugin={study:{terms:()=>({ok:true,data:{}})}};").getBoolean("ok"))
+            }
+        }
+    }
     @Test fun runsSharedHtmlAndPassesLargeResponsesOutsideBinder() = runBlocking {
         val result = run("""globalThis.plugin={study:{terms:async(a,c,s)=>({ok:true,data:{text:s.html.text('<b>A &amp; B</b>'),large:'x'.repeat(2*1024*1024),android:typeof Java,network:typeof fetch}})}};""")
         val data = result.getJSONObject("data")

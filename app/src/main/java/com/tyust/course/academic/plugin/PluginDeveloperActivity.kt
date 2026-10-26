@@ -299,12 +299,15 @@ class PluginDeveloperActivity : ComponentActivity() {
         bindCandidate?.let { pkg -> SystemDialog(onDismissRequest = { bindCandidate = null }, title = { Text("使用 ${pkg.manifest.name}") },
             content = { Text("将此适配添加到学校列表，之后可在登录页选择。已有学校和账号 ID 保持不变。") },
             confirmButton = { SystemDialogButton(primary = true, onClick = {
-                val school = AcademicProviderRegistry.school(pkg)
-                val user = UserManager.getInstance()
-                if (user.getSchoolById(school.id) != null) user.updateSchoolConfig(school) else user.addCustomSchool(school)
-                setResult(RESULT_OK, android.content.Intent().putExtra(PluginCenterActivity.EXTRA_CHANGED, true)
-                    .putExtra(PluginCenterActivity.EXTRA_TARGET_SCHOOL, school.id))
-                feedback = "已添加学校，请从学校列表选择并登录"; bindCandidate = null
+                try {
+                    val school = AcademicProviderRegistry.bindSchool(pkg)
+                    setResult(RESULT_OK, android.content.Intent().putExtra(PluginCenterActivity.EXTRA_CHANGED, true)
+                        .putExtra(PluginCenterActivity.EXTRA_TARGET_SCHOOL, school.id))
+                    feedback = "已选择此适配，请从学校列表选择并登录"
+                } catch (error: Exception) {
+                    feedback = error.message ?: "学校适配选择失败"
+                }
+                bindCandidate = null
             }) { Text("使用适配") } }, dismissButton = { SystemDialogButton(onClick = { bindCandidate = null }) { Text("取消") } }) }
     }
     @Composable private fun ForwardIcon() = Icon(Icons.Outlined.ChevronRight, null, Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)

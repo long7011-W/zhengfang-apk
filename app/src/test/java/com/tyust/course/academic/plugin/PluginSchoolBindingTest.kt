@@ -11,5 +11,9 @@ import org.robolectric.annotation.Config
 // The same checks run on Android API 24 / 32 / 35 in PluginSchoolBindingDeviceTest.
 @Config(sdk = [24], application = android.app.Application::class)
 class PluginSchoolBindingTest : PluginSchoolBindingChecks() {
-    override fun testContext(): Context = RuntimeEnvironment.getApplication()
+    override fun testContext(): Context = RespondingSandboxContext(RuntimeEnvironment.getApplication()) { request, _ ->
+        check(request.getString("operation") == "__inspect")
+        // The Android counterpart runs the executable package in the actual QuickJS process.
+        PluginJson.success(org.json.JSONArray(PluginManifest.AUTH))
+    }
 }

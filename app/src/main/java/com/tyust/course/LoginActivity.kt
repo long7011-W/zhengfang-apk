@@ -27,6 +27,7 @@ import com.tyust.course.login.PasswordLoginGateway
 import com.tyust.course.login.PasswordLoginGatewayFactory
 import com.tyust.course.academic.AcademicGatewayFactory
 import com.tyust.course.academic.AcademicPasswordLoginGateway
+import com.tyust.course.academic.academicType
 import com.tyust.course.academic.plugin.PluginCenterActivity
 import com.tyust.course.academic.plugin.AcademicProviderRegistry
 import com.tyust.course.AcademicWebViewActivity
@@ -335,8 +336,18 @@ class LoginActivity : ComponentActivity() {
             }
             val intent = Intent(this, AcademicWebViewActivity::class.java).apply {
                 val challenge = (activePasswordLoginGateway as? AcademicPasswordLoginGateway)?.webLogin
-                putExtra(AcademicWebViewActivity.EXTRA_START_URL, challenge?.getString("url") ?: AcademicGatewayFactory.loginUrl(currentSchool))
-                putExtra(AcademicWebViewActivity.EXTRA_COOKIE_URL, currentSchool.fullBasePath.trimEnd('/') + "/")
+                val start = challenge?.getString("url") ?: AcademicGatewayFactory.loginUrl(currentSchool)
+                val cookieTarget = currentSchool.fullBasePath.trimEnd('/') + "/"
+                val completion = challenge?.getString("completionUrl").orEmpty()
+                putExtra(AcademicWebViewActivity.EXTRA_START_URL, start)
+                putExtra(AcademicWebViewActivity.EXTRA_COOKIE_URL, cookieTarget)
+                putExtra(AcademicWebViewActivity.EXTRA_COMPLETION_URL, completion)
+                putExtra(AcademicWebViewActivity.EXTRA_SERVLET_SESSION, currentSchool.academicType() == com.tyust.course.academic.AcademicSystem.EAMS)
+                if (pendingPasswordSchool?.id == currentSchool.id &&
+                    com.tyust.course.academic.LntuWebLoginAssist.supports(start, cookieTarget, completion)) {
+                    putExtra(AcademicWebViewActivity.EXTRA_USERNAME, pendingPasswordUsername.trim())
+                    putExtra(AcademicWebViewActivity.EXTRA_PASSWORD, pendingPasswordValue)
+                }
                 if (challenge == null) putExtra(AcademicWebViewActivity.EXTRA_SEARCH_KEYWORD, "${currentSchool.name} 教务系统 登录")
                 putStringArrayListExtra(AcademicWebViewActivity.EXTRA_ALLOWED_HOSTS, hosts)
             }

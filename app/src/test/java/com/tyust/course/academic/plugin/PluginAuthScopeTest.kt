@@ -70,6 +70,63 @@ class PluginAuthScopeTest {
         session.retire()
         assertThrows(kotlinx.coroutines.CancellationException::class.java) { jar.saveFromResponse(login, emptyList()) }
     }
+    @Test fun callbackResponseEnablesOnlySameOriginReadsForThisRequest() {
+        val scope = PluginAuthScope(declaration())
+        val next = service.newBuilder().encodedPath("/ticketlogin").build()
+        scope.requireAllowed(service, "GET")
+        assertThrows(PluginException::class.java) { scope.requireAllowed(next, "GET") }
+        scope.responseReceived(login)
+        assertThrows(PluginException::class.java) { scope.requireAllowed(next, "GET") }
+        scope.responseReceived(service)
+        scope.requireAllowed(next, "GET")
+        scope.requireAllowed(next, "HEAD")
+        for ((url, method) in listOf(next to "POST", next to "PUT",
+            next.newBuilder().host("unrelated.test").build() to "GET",
+            next.newBuilder().addQueryParameter("ticket", "ST-synthetic").build() to "GET")) {
+            assertThrows(PluginException::class.java) { scope.requireAllowed(url, method) }
+        }
+        assertThrows(PluginException::class.java) { PluginAuthScope(declaration()).requireAllowed(next, "GET") }
+    }
+    @Test fun teachingCookiesSurviveMovingOutsideTheCallbackDirectory() {
+        val session = AcademicSessionStore().session("synthetic", "alice", service.toString())
+        val scope = PluginAuthScope(declaration())
+        val jar = PluginAcademicCookies(session, "synthetic.plugin", scope) { session.requireActive() }
+        val next = service.newBuilder().encodedPath("/xtgl/index_initMenu.html").build()
+        jar.saveFromResponse(login, listOf(Cookie.parse(login, "CAS_ONLY=synthetic; Domain=school.test; Path=/")!!))
+        jar.saveFromResponse(service, listOf(Cookie.parse(service, "TEACHING=synthetic; Path=/")!!))
+        assertEquals(listOf("TEACHING"), jar.loadForRequest(next).map { it.name })
+        jar.saveFromResponse(next, listOf(Cookie.parse(next, "MENU=synthetic; Path=/")!!))
+        assertEquals(setOf("TEACHING", "MENU"), session.cookies.loadForRequest(next).map { it.name }.toSet())
+        assertEquals(listOf("CAS_ONLY"), jar.loadForRequest(login).map { it.name })
+    }
+    @Test fun hostFollowsCallbackContinuationButStillRechecksTheManifest() {
+        for (allowedPath in listOf("/", "/sso")) MockWebServer().use { cas -> MockWebServer().use { academic ->
+            cas.start(); academic.start()
+            val login = cas.url("/cas/login")
+            val service = academic.url("/sso/zfiotlogin")
+            cas.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "$service?ticket=ST-synthetic"))
+            academic.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/ticketlogin").setHeader("Set-Cookie", "TEACHING=synthetic; Path=/"))
+            academic.enqueue(MockResponse().setResponseCode(302).setHeader("Location", "/xtgl/index_initMenu.html"))
+            academic.enqueue(MockResponse().setBody("signed in"))
+            val rules = listOf(cas to "/cas", academic to allowedPath).map { (server, path) ->
+                JSONObject().put("origin", server.url("/").toString().trimEnd('/')).put("pathPrefix", path)
+                    .put("methods", JSONArray(listOf("GET", "POST"))).put("purposes", JSONArray(listOf("auth")))
+            }
+            val manifest = PluginManifest(JSONObject().put("id", "test.hebic").put("version", "1.1.3").put("kind", "extension").put("apiVersion", 3).put("network", JSONArray(rules)))
+            val session = AcademicSessionStore().session("synthetic", "alice", service.toString())
+            val host = PluginHost(PluginOperation(session, manifest, "auth.start"), File("build/auth-scope-test"))
+            val request = JSONObject().put("url", login.toString()).put("purpose", "auth")
+                .put("authScope", JSONObject().put("loginUrl", login.toString()).put("serviceUrl", service.toString()))
+            if (allowedPath == "/") {
+                assertEquals("signed in", host.call("http", request).getJSONObject("data").getString("body"))
+                academic.takeRequest()
+                repeat(2) { assertEquals("TEACHING=synthetic", academic.takeRequest().getHeader("Cookie")) }
+            } else {
+                assertEquals(PluginErrorCode.UNTRUSTED_URL, assertThrows(PluginException::class.java) { host.call("http", request) }.code)
+                assertEquals(1, academic.requestCount)
+            }
+        } }
+    }
     @Test fun hostRejectsChangedServiceAtRedirectBeforeIssuingTheNextRequest() {
         MockWebServer().use { cas -> MockWebServer().use { academic ->
             cas.start(); academic.start()

@@ -111,11 +111,9 @@ class AcademicPasswordLoginGateway internal constructor(private val school: Scho
         val current = adapter as? com.tyust.course.academic.plugin.PluginAcademicAdapter
             ?: throw AcademicException(AcademicStatus.SESSION_EXPIRED, "网页登录会话已失效")
         val expected = current.webLogin?.getString("completionUrl") ?: throw AcademicException(AcademicStatus.SESSION_EXPIRED, "没有待完成的网页登录")
-        val actual = pageUrl.toHttpUrlOrNull()
-        val completion = expected.toHttpUrlOrNull()
-        if (actual == null || completion == null || actual.scheme != completion.scheme || actual.host != completion.host || actual.port != completion.port || actual.encodedPath != completion.encodedPath)
+        if (!matchesCompletion(expected, pageUrl, school.academicType() == AcademicSystem.EAMS))
             throw AcademicException(AcademicStatus.UNTRUSTED_URL, "请在指定的完成页面结束登录")
-        AcademicGatewayFactory.importCookie(school, current.session.key.accountKey, cookie, replace = false)
+        AcademicGatewayFactory.importBrowserCookie(school, current.session, cookie)
         return current.resumeWebLogin().also { result ->
             if (result.status == AcademicStatus.SUCCESS) {
                 completedPlugin = current
@@ -123,6 +121,16 @@ class AcademicPasswordLoginGateway internal constructor(private val school: Scho
                 studentId = result.studentId
                 current.clearLoginState()
             }
+        }
+    }
+
+    companion object {
+        internal fun matchesCompletion(expected: String, pageUrl: String, servletSession: Boolean = false): Boolean {
+            val actual = pageUrl.toHttpUrlOrNull() ?: return false
+            val completion = expected.toHttpUrlOrNull() ?: return false
+            val path = if (servletSession) actual.encodedPath.replace(Regex(";jsessionid=[A-Za-z0-9._-]{1,128}$"), "") else actual.encodedPath
+            return actual.username.isEmpty() && actual.password.isEmpty() && actual.scheme == completion.scheme &&
+                actual.host == completion.host && actual.port == completion.port && path == completion.encodedPath
         }
     }
 }
