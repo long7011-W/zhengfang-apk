@@ -341,7 +341,7 @@ class ScheduleReminderScheduler private constructor(
             val course = occurrence(record, plan.startsAt)?.course ?: record.course
             val study = record.study
             val notification = NotificationCompat.Builder(context, CHANNEL).setSmallIcon(R.drawable.ic_course_reminder)
-                .setContentTitle("${course.name} · " + (if (late) "已开始上课" else if (study == null) "即将上课" else "即将开始"))
+                .setContentTitle("${course.name} · " + (if (late) "已开始" else if (study == null) "即将上课" else "即将开始"))
                 .setContentText(
                     if (study == null) listOf(course.location, "第 ${course.startPeriod}-${course.endPeriod} 节").filter { it.isNotBlank() }.joinToString(" · ")
                     else "${study.start} – ${study.end}"
