@@ -75,9 +75,7 @@ __pycache__/
 /web-app/
 /AndroidLiquidGlass/
 /tools/
-/docs/*
-!/docs/images/
-!/docs/README.md
+# docs/ 正常纳入版本控制；不要整体忽略，否则新增文档不会出现在 git status 中
 /pic/
 /api.md
 /退课API技术文档.md

@@ -191,16 +191,16 @@ fun ScheduleScreen(
                 if (issue != null && issue.visibleWithCache()) Box(Modifier.fillMaxSize()
                     .padding(top = topInset, bottom = LocalAppOverlayBottomInset.current + 8.dp)
                     .padding(horizontal = 16.dp, vertical = 8.dp)) {
-                Surface(Modifier.align(Alignment.TopCenter).heightIn(max = 180.dp)
-                    .testTag("schedule-refresh-notice"), shape = MaterialTheme.shapes.medium) {
-                    Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(12.dp)) {
-                        Text("已保留本地课表 · ${issue.message}", style = MaterialTheme.typography.bodySmall)
-                        Row {
-                            TextButton(onClick = onRetry, enabled = !isLoading) { Text(issue.actionLabel) }
-                            TextButton(onClick = onDismissIssue) { Text("关闭") }
+                    Surface(Modifier.align(Alignment.TopCenter).heightIn(max = 180.dp)
+                        .testTag("schedule-refresh-notice"), shape = MaterialTheme.shapes.medium) {
+                        Column(Modifier.verticalScroll(androidx.compose.foundation.rememberScrollState()).padding(12.dp)) {
+                            Text("已保留本地课表 · ${issue.message}", style = MaterialTheme.typography.bodySmall)
+                            Row {
+                                TextButton(onClick = onRetry, enabled = !isLoading) { Text(issue.actionLabel) }
+                                TextButton(onClick = onDismissIssue) { Text("关闭") }
+                            }
                         }
                     }
-                }
                 }
             }
             }
